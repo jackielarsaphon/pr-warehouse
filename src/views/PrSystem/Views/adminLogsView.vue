@@ -1,6 +1,5 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import { supabase } from '@/lib/supabase'
 
 const loading = ref(true)
@@ -56,7 +55,7 @@ async function fetchData() {
     if (userIds.length) {
       const { data: users, error: usersError } = await supabase
         .from('system_users')
-        .select('id, emp_code, fullname, username, role')
+        .select('id, emp_code, fullname, username')
         .in('id', userIds)
       if (!usersError) {
         for (const u of users || []) byId[u.id] = u
@@ -74,19 +73,10 @@ async function fetchData() {
 
 onMounted(fetchData)
 
-const allowedLogs = computed(() => {
-  const allowedRoles = new Set(['staff', 'admin_store'])
-  return (logs.value || []).filter((row) => {
-    const role = systemUsersById.value[row.system_user_id]?.role
-    return role && allowedRoles.has(role)
-  })
-})
-
 const filteredLogs = computed(() => {
   const key = searchText.value.trim().toLowerCase()
-  const base = allowedLogs.value
-  if (!key) return base
-  return base.filter((row) => {
+  if (!key) return logs.value
+  return logs.value.filter((row) => {
     const user = systemUsersById.value[row.system_user_id]
     const oldValueText = formatOldValue(row.old_value)
     const haystack = [
@@ -125,7 +115,7 @@ function goNext() {
 </script>
 
 <template>
-  <AppLayout>
+  <div>
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
       <div>
         <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">บันทึกการใช้งานระบบ</h1>
@@ -215,7 +205,7 @@ function goNext() {
         </table>
       </div>
     </div>
-  </AppLayout>
+  </div>
 </template>
 
 <style scoped>

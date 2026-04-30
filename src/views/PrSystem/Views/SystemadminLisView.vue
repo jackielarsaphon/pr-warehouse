@@ -1,6 +1,5 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import { supabase, supabaseEmployee } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import bcrypt from 'bcryptjs'
@@ -44,14 +43,16 @@ const selectedEmpAlreadyHasUser = computed(() => {
 function roleToDb(uiRole) {
   const r = (uiRole || '').toString()
   if (r === 'admin') return 'admin_store'
-  if (['staff', 'admin_store'].includes(r)) return r
+  if (['staff', 'admin_store', 'super_admin'].includes(r)) return r
   if (r === 'user') return 'staff'
   return 'staff'
 }
 
 function roleLabel(dbRole) {
   if (dbRole === 'staff') return 'staff'
+  if (dbRole === 'admin') return 'admin_store'
   if (dbRole === 'admin_store') return 'admin_store'
+  if (dbRole === 'super_admin') return 'super_admin'
   return dbRole || '-'
 }
 
@@ -72,7 +73,6 @@ async function fetchSystemUsers() {
     const { data, error } = await supabase
       .from('system_users')
       .select('id, username, emp_code, fullname, role, created_at, created_by')
-      .neq('role', 'super_admin')
       .order('created_at', { ascending: false })
 
     if (error) throw error
@@ -94,13 +94,10 @@ async function fetchSystemUsers() {
       }
     }
 
-    systemUsers.value = list
-      .map((row) => ({
-        ...row,
-        role: row.role === 'admin' ? 'admin_store' : row.role,
-        _creator: row.created_by ? creatorById[row.created_by] : null,
-      }))
-      .filter((row) => row.role !== 'super_admin')
+    systemUsers.value = list.map((row) => ({
+      ...row,
+      _creator: row.created_by ? creatorById[row.created_by] : null,
+    }))
   } catch (err) {
     alert('โหลดข้อมูลผู้ใช้งานระบบไม่สำเร็จ: ' + err.message)
     systemUsers.value = []
@@ -278,10 +275,6 @@ async function submitCreate() {
 
   saving.value = true
   try {
-    const dbRole = roleToDb(form.value.role)
-    if (!['staff', 'admin_store'].includes(dbRole)) {
-      throw new Error('ตารางนี้อนุญาตให้บันทึกได้เฉพาะ role: staff และ admin_store เท่านั้น')
-    }
     const password_hash = await bcrypt.hash(form.value.password, 10)
     const payload = {
       emp_code: selectedEmployee.value.employee_code,
@@ -290,7 +283,7 @@ async function submitCreate() {
       department: selectedEmployee.value.department || null,
       username: form.value.username,
       password_hash,
-      role: dbRole,
+      role: roleToDb(form.value.role),
       created_by: auth.user.id,
     }
 
@@ -328,6 +321,8 @@ async function submitCreate() {
 // }
 
 function statusColor(role){
+  if (role === 'super_admin') return 'bg-purple-50 text-purple-700 border-purple-100 dark:bg-purple-700/30 dark:border-purple-700/30 dark:text-purple-300'
+  if (role === 'admin') return 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-700/30 dark:border-blue-700/30 dark:text-blue-300'
   if (role === 'admin_store') return 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-700/30 dark:border-blue-700/30 dark:text-blue-300'
   if (role === 'staff') return 'bg-green-50 text-green-700 border-green-100 dark:bg-green-700/30 dark:border-green-700/30 dark:text-green-500'
   return 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-700/30 dark:border-amber-700/30 dark:text-amber-500'
@@ -335,7 +330,7 @@ function statusColor(role){
 </script>
 
 <template>
-  <AppLayout>
+  <div>
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
       <div>
         <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ผู้ใช้งานระบบ</h1>
@@ -540,6 +535,7 @@ function statusColor(role){
               >
                 <option value="staff">staff</option>
                 <option value="admin_store">admin_store</option>
+                <option value="super_admin">super_admin</option>
               </select>
             </div>
           </form>
@@ -565,7 +561,7 @@ function statusColor(role){
         </div>
       </div>
     </Transition>
-  </AppLayout>
+  </div>
 </template>
 
 <style scoped>

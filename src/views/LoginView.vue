@@ -24,7 +24,9 @@ async function handleLogin() {
       error.value = result.message
     } else {
       const role = auth.user?.role || 'staff'
-      if (role === 'admin') {
+      if (role === 'super_admin') {
+        router.push('/pr/admin')
+      } else if (role === 'admin_store') {
         router.push('/dashboard')
       } else {
         router.push('/u/home')
