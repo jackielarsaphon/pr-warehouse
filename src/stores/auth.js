@@ -19,7 +19,9 @@ async function getPublicIp() {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref(JSON.parse(localStorage.getItem('mwm_session')) || null)
+  const initialUser = JSON.parse(localStorage.getItem('mwm_session')) || null
+  if (initialUser?.role === 'admin') initialUser.role = 'admin_store'
+  const user = ref(initialUser)
   const isLoggedIn = computed(() => !!user.value)
   const initials = computed(() => user.value?.fullname?.slice(0, 2).toUpperCase() || 'US')
 
@@ -44,6 +46,7 @@ export const useAuthStore = defineStore('auth', () => {
 
       // 3. Prepare safe user object
       const { password_hash: _, ...safeUser } = userData
+      if (safeUser?.role === 'admin') safeUser.role = 'admin_store'
       user.value = safeUser
       localStorage.setItem('mwm_session', JSON.stringify(safeUser))
 

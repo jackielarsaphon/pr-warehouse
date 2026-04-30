@@ -1,14 +1,17 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ProfileEditSidebar from '@/components/layout/ProfileEditSidebar.vue'
 
 const auth = useAuthStore()
+const router = useRouter()
 const isOpen = ref(false)
 const showConfirmLogout = ref(false)
 const showEditProfile = ref(false)
 const profileImg = ref('')
+const switchOpen = ref(false)
 
 // Load profile image from localStorage
 function loadProfileImage() {
@@ -29,7 +32,10 @@ const department = computed(() => auth.user?.department || '-')
 
 function toggleDropdown() {
   isOpen.value = !isOpen.value
-  if (isOpen.value) loadProfileImage()
+  if (isOpen.value) {
+    loadProfileImage()
+    switchOpen.value = false
+  }
 }
 
 function handleLogout() {
@@ -44,7 +50,18 @@ function confirmLogout() {
 
 function openEditProfile() {
   isOpen.value = false
+  switchOpen.value = false
   showEditProfile.value = true
+}
+
+function toggleSwitch() {
+  switchOpen.value = !switchOpen.value
+}
+
+function goToPrSystem() {
+  isOpen.value = false
+  switchOpen.value = false
+  router.push('/pr/admin')
 }
 
 function onProfileUpdated() {
@@ -108,6 +125,39 @@ function onProfileUpdated() {
             </div>
             แก้ไขข้อมูลโปรไฟล์
           </button>
+
+          <div v-if="auth.user?.role === 'super_admin'">
+            <button
+              type="button"
+              @click="toggleSwitch"
+              class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[13px] font-medium transition-colors hover:bg-gray-50 dark:hover:bg-slate-700/50 text-left"
+              style="color: var(--color-text-secondary)"
+            >
+              <div class="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center">
+                <i class="fa-solid fa-right-left text-purple-600 dark:text-purple-300"></i>
+              </div>
+              สลับระบบ
+              <i
+                class="fa-solid fa-chevron-down text-[10px] ml-auto transition-transform duration-200"
+                :class="{ 'rotate-180': switchOpen }"
+                style="color: var(--color-text-muted)"
+              ></i>
+            </button>
+
+            <div v-if="switchOpen" class="px-4 pb-2">
+              <button
+                type="button"
+                class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-colors hover:bg-gray-50 dark:hover:bg-slate-700/50 text-left"
+                style="color: var(--color-text-secondary)"
+                @click="goToPrSystem"
+              >
+                <div class="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center">
+                  <i class="fa-solid fa-file-circle-check text-purple-600 dark:text-purple-300"></i>
+                </div>
+                ไป ระบบ PR
+              </button>
+            </div>
+          </div>
           
           <button @click="handleLogout"
                   class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[13px] font-medium transition-colors hover:bg-red-50 dark:hover:bg-red-900/10 text-left text-red-600">

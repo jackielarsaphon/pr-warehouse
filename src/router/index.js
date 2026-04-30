@@ -16,8 +16,10 @@ import CreateOrderView from '@/views/localState/users/CreateOrderView.vue'
 import CreatePRView from '@/views/localState/users/CreatePRView.vue'
 import HistoryView from '@/views/localState/users/HistoryView.vue'
 import WithdrawFormView from '@/views/localState/users/WithdrawFormView.vue'
-
-
+import PrAdminView from '@/views/PrSystem/AdminView.vue'
+// PrSystem Views
+import SystemadminLisView from '@/views/PrSystem/Views/SystemadminLisView.vue'
+import AdminLogsView from '@/views/PrSystem/Views/adminLogsView.vue'
 
 const routes = [
   { path: '/', component: LoginView, meta: { requiresAuth: false } },
@@ -37,6 +39,10 @@ const routes = [
   { path: '/u/create-pr', component: CreatePRView, meta: { requiresAuth: true } },
   { path: '/u/history', component: HistoryView, meta: { requiresAuth: true } },
   { path: '/u/withdraw', component: WithdrawFormView, meta: { requiresAuth: true } },
+  { path: '/pr/admin', component: PrAdminView, meta: { requiresAuth: true, isSuperAdmin: true } },
+  // PrSystem Routes
+  { path: '/pr/system-admins', component: SystemadminLisView, meta: { requiresAuth: true, isSuperAdmin: true, isAdmin: true } },
+  { path: '/pr/logs-usage', component: AdminLogsView, meta: { requiresAuth: true, isSuperAdmin: true, isAdmin: true } },
 ]
 
 const router = createRouter({
@@ -53,14 +59,21 @@ router.beforeEach((to) => {
     return '/'
   }
 
-  // 2. ถ้าเข้าหน้า Admin (isAdmin: true) แต่ไม่ใช่ admin
-  if (to.meta.isAdmin && user?.role !== 'admin') {
+  // 2. ถ้าเข้าหน้า Admin (isAdmin: true) แต่ไม่ใช่ admin_store/super_admin
+  if (to.meta.isAdmin && !['admin_store', 'super_admin'].includes(user?.role)) {
     return '/u/home'
+  }
+
+  // 2.1 ถ้าเข้าหน้า Super Admin แต่ไม่ใช่ super_admin
+  if (to.meta.isSuperAdmin && user?.role !== 'super_admin') {
+    return user?.role === 'admin_store' ? '/dashboard' : '/u/home'
   }
 
   // 3. ถ้าเข้าหน้า Login ทั้งที่มี Session แล้ว
   if (to.path === '/' && user) {
-    return user.role === 'admin' ? '/dashboard' : '/u/home'
+    if (user.role === 'super_admin') return '/pr/admin'
+    if (user.role === 'admin_store') return '/dashboard'
+    return '/u/home'
   }
 })
 
