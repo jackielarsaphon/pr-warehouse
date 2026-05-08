@@ -20,7 +20,6 @@ import PrView from "./Views/prView.vue"
 import PoView from "./Views/poView.vue"
 import ApView from "./Views/apView.vue"
 import PvView from "./Views/pvView.vue"
-import HistoryPrListView from "./Views/historyPrListView.vue"
 
 const auth = useAuthStore()
 const trcloudStore = useTrcloudStore()
@@ -191,7 +190,6 @@ const onLogout = () => {
         <PoView v-else-if="activePage === 'pr_po'" />
         <ApView v-else-if="activePage === 'pr_ap'" />
         <PvView v-else-if="activePage === 'pr_pv'" />
-        <HistoryPrListView v-else-if="activePage === 'pr_history'" />
         <div
           v-else-if="activePage !== 'default'"
           class="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 p-6"
