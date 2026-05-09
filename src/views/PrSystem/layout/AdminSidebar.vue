@@ -28,7 +28,7 @@ const menuItems = [
       { id: "/#/pr_pv", icon: "fa-money-check-dollar", label: "รายการ PV" },
     ],
   },
-  { id: "/#/pr_history", icon: "fa-clock-rotate-left", label: "ประวัติทั้งหมด" },
+  { id: "/#/pr_history", icon: "fa-clipboard-check", label: "สถานะ PR-PO-AP-PV" },
   {
     id: "/#/system_admins",
     icon: "fa-user-shield",

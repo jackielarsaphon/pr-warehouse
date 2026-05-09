@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { trcloudProxyExtraHeaders } from '@/utils/trcloudSession'
 
 export const useTrcloudStore = defineStore('trcloud', () => {
   const prRows = ref([])
@@ -23,11 +24,19 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   const loading = ref(false)
   const lastFetched = ref(null)
   
-  // Default date range is all historical data.
+  // Default date range is rolling 4 months (current month + previous 3 months).
   const getInitialDates = () => {
+    const formatLocalYmd = (d) => {
+      const yyyy = String(d.getFullYear())
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      const dd = String(d.getDate()).padStart(2, '0')
+      return `${yyyy}-${mm}-${dd}`
+    }
+
     const now = new Date()
-    const to = now.toISOString().split('T')[0] // Today's date
-    const from = '2000-01-01'
+    const to = formatLocalYmd(now) // Today's date
+    const fromDate = new Date(now.getFullYear(), now.getMonth() - 3, 1)
+    const from = formatLocalYmd(fromDate)
     
     return { from, to }
   }
@@ -63,7 +72,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   }
 
   async function fetchTrcloudData(type = 'pr', options = {}) {
-    const { force = false } = options
+    const { force = false, skipApStatusSync = false } = options
     if (shouldUseTypeCache(type, force)) return
     if (activeRequests.has(type)) return activeRequests.get(type)
 
@@ -72,16 +81,16 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     console.log(`Starting fetch for ${type}...`)
     const requestPromise = (async () => {
       try {
-      const companyId = import.meta.env.VITE_TRCLOUD_COMPANY_ID
-      const passkey = import.meta.env.VITE_TRCLOUD_PASSKEY
+      const companyId = (import.meta.env.VITE_TRCLOUD_COMPANY_ID || '').trim()
+      const passkey = (import.meta.env.VITE_TRCLOUD_PASSKEY || '').trim()
       
       if (!companyId || !passkey) {
         console.error('TRCLOUD API Credentials missing! Please check your VITE_TRCLOUD_COMPANY_ID and VITE_TRCLOUD_PASSKEY in .env file.')
         return
       }
 
-      // Only log first 4 chars for security
-      console.log(`Fetch ${type} using Company ID: ${companyId}`)
+      // Keep logs safe but useful for diagnosing stale/invalid env values.
+      console.log(`Fetch ${type} using Company ID: ${companyId}, passkey length: ${passkey.length}`)
       
       let endpoint = ''
       let docType = 'project'
@@ -254,7 +263,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
       typeLastRange.value[type] = getCurrentRangeKey()
 
       // After all pages are fetched, do the background AP status check
-      if (type === 'ap' && apRows.value.length > 0) {
+      if (type === 'ap' && !skipApStatusSync && apRows.value.length > 0) {
         const needsUpdate = apRows.value.filter(ap => ap.payment_status === 'ยังไม่ชำระ')
         if (needsUpdate.length > 0) {
           // We limit background check to the most recent 30 items to save resources
@@ -269,7 +278,8 @@ export const useTrcloudStore = defineStore('trcloud', () => {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
+                    ...trcloudProxyExtraHeaders(),
                   },
                   body: new URLSearchParams({ json: JSON.stringify(inner) })
                 })
@@ -304,16 +314,16 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   }
 
   async function fetchAll(options = {}) {
-    const { force = false } = options
+    const { force = false, skipApStatusSync = false } = options
     if (loading.value) return
     loading.value = true
     try {
       // Fetch in parallel to reduce total waiting time.
       await Promise.all([
-        fetchTrcloudData('pr', { force }),
-        fetchTrcloudData('po', { force }),
-        fetchTrcloudData('ap', { force }),
-        fetchTrcloudData('pv', { force })
+        fetchTrcloudData('pr', { force, skipApStatusSync }),
+        fetchTrcloudData('po', { force, skipApStatusSync }),
+        fetchTrcloudData('ap', { force, skipApStatusSync }),
+        fetchTrcloudData('pv', { force, skipApStatusSync })
       ])
       lastFetched.value = new Date()
     } finally {

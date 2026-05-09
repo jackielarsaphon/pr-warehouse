@@ -96,6 +96,7 @@ let urgentBarChart = null
 let receiverBarChart = null
 let purchaseStatusBarChart = null
 let monthlyComparisonBarChart = null
+let renderChartsTimer = null
 
 const currencyValueLabelsPlugin = {
   id: 'currencyValueLabelsPlugin',
@@ -194,6 +195,15 @@ function ym(d) {
   return `${yyyy}-${mm}`
 }
 
+function getRollingFourMonthRange() {
+  const now = new Date()
+  const from = new Date(now.getFullYear(), now.getMonth() - 3, 1)
+  return {
+    from: ymd(from),
+    to: ymd(now),
+  }
+}
+
 function parseYm(value) {
   const raw = String(value || '').trim()
   const m = raw.match(/^(\d{4})-(\d{2})$/)
@@ -254,7 +264,7 @@ function applyPreset(mode) {
   const end = startOfDay(now)
   let start = startOfDay(now)
   if (mode === 'all') {
-    start = new Date('2000-01-01')
+    start = new Date(now.getFullYear(), now.getMonth() - 3, 1)
   } else if (mode === 'last7') {
     start = new Date(end)
     start.setDate(start.getDate() - 6)
@@ -394,8 +404,9 @@ async function fetchDashboard() {
   errorText.value = ''
   try {
     // Sync store dates
-    trcloudStore.dateFrom = appliedFrom.value || '2000-01-01'
-    trcloudStore.dateTo = appliedTo.value || ymd(new Date())
+    const rolling = getRollingFourMonthRange()
+    trcloudStore.dateFrom = appliedFrom.value || rolling.from
+    trcloudStore.dateTo = appliedTo.value || rolling.to
 
     // If data already exists and it's within 5 minutes, use it instead of full fetch
     const now = new Date()
@@ -410,7 +421,7 @@ async function fetchDashboard() {
 
     if (!isCacheFresh || isAnyDataMissing) {
       // Fetch data from TRCLOUD via store
-      await trcloudStore.fetchAll()
+      await trcloudStore.fetchAll({ skipApStatusSync: true })
     }
 
     // Update charts data
@@ -420,6 +431,7 @@ async function fetchDashboard() {
 
     // Urgent PRs
     urgentPrRows.value = trcloudStore.prRows.slice(0, 10)
+    await renderCharts()
 
   } catch (err) {
     errorText.value = String(err?.message || err || 'เกิดข้อผิดพลาด')
@@ -919,9 +931,17 @@ async function renderCharts() {
   }
 }
 
+function scheduleRenderCharts() {
+  if (renderChartsTimer) clearTimeout(renderChartsTimer)
+  renderChartsTimer = setTimeout(() => {
+    renderCharts()
+    renderChartsTimer = null
+  }, 180)
+}
+
 watch([statusChart, trendChart, currencyChart, prUrgentChart, prTrendChart, receiverChart, purchaseStatusChart, monthlyComparisonChart], () => {
   if (loading.value) return
-  renderCharts()
+  scheduleRenderCharts()
 })
 
 onMounted(async () => {
@@ -932,10 +952,10 @@ onMounted(async () => {
   prMonthInput.value = appliedTo.value ? String(appliedTo.value).slice(0, 7) : ym(new Date())
   await Promise.all([fetchDepartmentOptions(), fetchUrgentMap(), fetchTeamMap()])
   await fetchDashboard()
-  await renderCharts()
 })
 
 onUnmounted(() => {
+  if (renderChartsTimer) clearTimeout(renderChartsTimer)
   destroyCharts()
 })
 </script>
@@ -958,7 +978,7 @@ onUnmounted(() => {
               :style="filterMode === 'all' ? { borderColor: '#2563eb' } : { borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }"
               @click="filterMode = 'all'; applyPreset('all'); fetchDashboard()"
             >
-              ทั้งหมด
+              4 เดือนล่าสุด
             </button>
             <button
               type="button"
