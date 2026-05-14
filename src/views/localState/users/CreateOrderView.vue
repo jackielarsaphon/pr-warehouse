@@ -1,7 +1,7 @@
 <script setup>
 import UserAppToolbar from '@/components/layout/UserAppToolbar.vue'
 import WithdrawFormView from './WithdrawFormView.vue'
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
 
 const loading = ref(true)
@@ -91,16 +91,18 @@ const isSearching = computed(() =>
 const filteredItems = computed(() => {
   // Reset to page 1 when filter changes (handled via watcher-like computed side-effect via separate watcher)
   return items.value.filter(item => {
+    const q = searchText.value.toLowerCase()
+    const usage = String(item.usage_type ?? '').toLowerCase()
     const matchSearch = !searchText.value ||
-      item.item_name.toLowerCase().includes(searchText.value.toLowerCase()) ||
-      item.item_code.toLowerCase().includes(searchText.value.toLowerCase())
+      item.item_name.toLowerCase().includes(q) ||
+      item.item_code.toLowerCase().includes(q) ||
+      usage.includes(q)
     const matchCategory = selectedCategoryId.value === 'all' || item.category_id === selectedCategoryId.value
     return matchSearch && matchCategory
   })
 })
 
 // Reset page when search/filter changes
-import { watch } from 'vue'
 watch([searchText, selectedCategoryId], () => { currentPage.value = 1 })
 
 const totalPages = computed(() => {
@@ -181,7 +183,7 @@ function handleFormSubmit(data) { console.log('Submit form:', data) }
           <div class="flex flex-col md:flex-row gap-3 mb-6 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 shadow-sm">
             <div class="flex-1 relative">
               <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-[14px]"></i>
-              <input v-model="searchText" type="text" placeholder="ค้นหาชื่อหรือรหัสพัสดุ..."
+              <input v-model="searchText" type="text" placeholder="ค้นหาชื่อ, รหัส หรือประเภทที่ใช้..."
                 class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-[14px] focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all" />
             </div>
             <select v-model="selectedCategoryId"
@@ -220,7 +222,11 @@ function handleFormSubmit(data) { console.log('Submit form:', data) }
                 </span>
               </div>
               <h3 class="text-[15px] font-bold text-gray-800 dark:text-gray-100 mb-1 line-clamp-1">{{ item.item_name }}</h3>
-              <p class="text-[12px] text-gray-400 mb-4">{{ item.category?.category_name || '-' }}</p>
+              <p class="text-[12px] text-gray-400 mb-1.5">{{ item.category?.category_name || '-' }}</p>
+              <p class="text-[11px] text-gray-500 dark:text-gray-400 mb-4 line-clamp-2 leading-snug">
+                <span class="text-gray-400 dark:text-gray-500 shrink-0">ประเภทที่ใช้</span>
+                <span class="font-medium text-gray-700 dark:text-gray-200 ml-1">{{ String(item.usage_type ?? '').trim() || '—' }}</span>
+              </p>
               <div class="flex items-center justify-between">
                 <div>
                   <span class="text-[16px] font-black text-blue-600">{{ item.current_stock }}</span>

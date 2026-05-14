@@ -47,9 +47,10 @@ const purposeOptions = [
 // Employee Search States
 const employeeSearchLoading = ref(false)
 const employeeResults = ref([])
-const activeSearchField = ref(null) // 'receive_by' or 'inspector_by'
+const activeSearchField = ref(null) // 'receive_by', 'inspector_by', or 'approver_by'
 const sharedReceiveBy = ref('')
 const sharedInspectorBy = ref('')
+const sharedApproverBy = ref('')
 
 async function searchEmployees(query) {
   if (!query || query.length < 2) {
@@ -79,6 +80,7 @@ function selectEmployee(emp, field, orderId = null) {
   } else {
     if (field === 'receive_by') sharedReceiveBy.value = emp.fullname
     if (field === 'inspector_by') sharedInspectorBy.value = emp.fullname
+    if (field === 'approver_by') sharedApproverBy.value = emp.fullname
   }
   employeeResults.value = []
   activeSearchField.value = null
@@ -92,9 +94,10 @@ const groupedOrders = computed(() => {
     if (!key) return true
     const itemCode = row.items?.item_code?.toLowerCase() || ''
     const itemName = row.items?.item_name?.toLowerCase() || ''
+    const usageType = String(row.items?.usage_type ?? '').toLowerCase().trim()
     const note = row.note?.toLowerCase() || ''
     const remark = row.remark?.toLowerCase() || ''
-    return itemCode.includes(key) || itemName.includes(key) || note.includes(key) || remark.includes(key)
+    return itemCode.includes(key) || itemName.includes(key) || usageType.includes(key) || note.includes(key) || remark.includes(key)
   })
 
   const groups = {}
@@ -161,7 +164,7 @@ async function processBarcodeInput(code) {
   try {
     const { data, error } = await supabase
       .from('order_req')
-      .select('*, items(item_code, item_name, current_stock), category(category_name)')
+      .select('*, items(item_code, item_name, current_stock, usage_type), category(category_name)')
       .eq('request_id', requestId)
       .order('created_at', { ascending: true })
 
@@ -198,6 +201,7 @@ function initScanForms(items) {
     const creator = systemUsers.value.find(u => u.id === items[0].created_by)
     sharedReceiveBy.value = items[0].receive_by || (creator ? creator.fullname : '')
     sharedInspectorBy.value = items[0].inspector_by || ''
+    sharedApproverBy.value = items[0].approver_by || ''
   }
 
   items.forEach((order) => {
@@ -456,33 +460,34 @@ async function submitGroupWithdraw({ closeScanModal, closeBillPreviewModal }) {
 
       const nextStatus = form.status
 
-      // กันเบิกซ้ำ
-      const alreadyWithdrawn = transactions.value.some((row) => row.order_id === order.id)
-      if (nextStatus === 'completed' && alreadyWithdrawn) continue
-
+      // 1. จัดการข้อมูลในตาราง transactions (เฉพาะกรณีที่สถานะเป็น completed)
       if (nextStatus === 'completed') {
-        const { error: txError } = await supabase.from('transactions').insert({
-          item_id: order.item_id,
-          amount: Number(form.amount),
-          unit: form.unit,
-          category_id: order.category_id || null,
-          document_url: order.document_url || null,
-          image_url: order.image_url || null,
-          return_date: form.is_return ? form.return_date || null : null,
-          note: form.note || null,
-          remark: form.remark || null,
-          order_id: order.id,
-          created_by: auth.user.id,
-          updated_by: auth.user.id,
-        })
-        if (txError) throw txError
+        const alreadyInTransactions = transactions.value.some((row) => row.order_id === order.id)
+        if (!alreadyInTransactions) {
+          const { error: txError } = await supabase.from('transactions').insert({
+            item_id: order.item_id,
+            amount: Number(form.amount),
+            unit: form.unit,
+            category_id: order.category_id || null,
+            document_url: order.document_url || null,
+            image_url: order.image_url || null,
+            return_date: form.is_return ? form.return_date || null : null,
+            note: form.note || null,
+            remark: form.remark || null,
+            order_id: order.id,
+            created_by: auth.user.id,
+            updated_by: auth.user.id,
+          })
+          if (txError) throw txError
+        }
       }
 
+      // 2. อัปเดตสถานะในตาราง order_req เสมอ
       const { error: orderError } = await supabase
         .from('order_req')
         .update({
           status: nextStatus,
-          updated_by: auth.user.id, // ระบบจะนำข้อมูลผู้ใช้งานที่ทำการอนุมัติบันทึกเข้าไป (ผู้จ่าย)
+          updated_by: sharedApproverBy.value || null, 
           updated_at: new Date().toISOString(),
           remark: form.remark || null,
           mr_number: form.mr_number || null,
@@ -514,7 +519,7 @@ async function submitGroupWithdraw({ closeScanModal, closeBillPreviewModal }) {
       closeBillPreview()
     }
     await fetchData()
-    ui.showToast(`บันทึกสำเร็จ ${withdrawableItems.length} รายการ`, 'success')
+    ui.showToast(`ดำเนินการเรียบร้อยแล้ว`, 'success')
   } catch (err) {
     if ((err.message || '').includes('stock_insufficient')) {
       alert('สต็อกสินค้าไม่พอสำหรับการเบิกตามจำนวนที่ระบุ')
@@ -549,6 +554,9 @@ const withdrawForm = ref({
   return_date: '',
   note: '',
   remark: '',
+  receive_by: '',
+  inspector_by: '',
+  approver_by: '',
   status: 'completed'
 })
 
@@ -556,8 +564,8 @@ async function fetchData() {
   loading.value = true
   try {
     const [{ data: ordersData, error: ordersError }, { data: usersData, error: usersError }, { data: txData, error: txError }] = await Promise.all([
-      supabase.from('order_req').select('*, items(item_code,item_name,current_stock), category(category_name)').order('created_at', { ascending: false }),
-      supabase.from('system_users').select('id, fullname, emp_code'),
+      supabase.from('order_req').select('*, items(item_code,item_name,current_stock,usage_type), category(category_name)').order('created_at', { ascending: false }),
+      supabase.from('system_users').select('id, fullname, emp_code, department'),
       supabase.from('transactions').select('order_id, amount, unit, return_date, created_at').order('created_at', { ascending: false })
     ])
     if (ordersError) throw ordersError
@@ -573,42 +581,41 @@ async function fetchData() {
   }
 }
 
-const filteredOrders = computed(() => {
-  const key = searchText.value.trim().toLowerCase()
-  return orders.value.filter((row) => {
-    const itemCode = row.items?.item_code?.toLowerCase() || ''
-    const itemName = row.items?.item_name?.toLowerCase() || ''
-    const note = row.note?.toLowerCase() || ''
-    const remark = row.remark?.toLowerCase() || ''
-    const matchSearch = !key || itemCode.includes(key) || itemName.includes(key) || note.includes(key) || remark.includes(key)
-    const matchStatus = selectedStatus.value === 'all' || row.status === selectedStatus.value
-    return matchSearch && matchStatus
-  })
-})
-
-function getStatusClass(status) {
-  if (status === 'approved') return 'bg-green-50 text-green-600 border-green-100 dark:bg-green-800/20 dark:border-green-800/20 dark:text-green-400'
-  if (status === 'rejected') return 'bg-red-50 text-red-600 border-red-100 dark:bg-red-800/20 dark:border-red-800/20 dark:text-red-400'
-  if (status === 'completed') return 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-800/20 dark:border-blue-800/20 dark:text-blue-400'
-  return 'bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-800/20 dark:border-amber-800/20 dark:text-amber-400'
+function userLabel(userIdOrName) {
+  if (!userIdOrName) return '-'
+  
+  // 1. ลองหาในรายการ systemUsers ก่อน (เผื่อเป็น UUID)
+  const user = systemUsers.value.find((row) => row.id === userIdOrName)
+  if (user) {
+    return user.emp_code ? `${user.fullname} (${user.emp_code})` : user.fullname
+  }
+  
+  // 2. ถ้าหาไม่เจอ ให้คืนค่าเป็นชื่อที่เก็บไว้ในฟิลด์นั้นตรงๆ (แบบ Text)
+  return userIdOrName
 }
 
-function getStatusText(status) {
-  if (status === 'approved') return 'อนุมัติ'
-  if (status === 'rejected') return 'ไม่อนุมัติ'
-  if (status === 'completed') return 'เบิกแล้ว'
-  return 'รออนุมัติ'
-}
-
-function userLabel(userId) {
-  const user = systemUsers.value.find((row) => row.id === userId)
-  if (!user) return '-'
-  return user.emp_code ? `${user.fullname} (${user.emp_code})` : user.fullname
+/** หน่วยงานของผู้ขอ (จาก system_users.department) */
+function userDepartment(userIdOrName) {
+  if (!userIdOrName) return '—'
+  const user = systemUsers.value.find((row) => row.id === userIdOrName)
+  const d = user?.department != null ? String(user.department).trim() : ''
+  return d || '—'
 }
 
 function formatDateTime(value) {
   if (!value) return '-'
   return new Date(value).toLocaleString('th-TH')
+}
+
+/** จำนวนวันตั้งแต่วันที่ขอ (ตามวันที่ปฏิทิน) ถึงวันนี้ */
+function daysSinceRequest(iso) {
+  if (!iso) return 0
+  const started = new Date(iso)
+  const today = new Date()
+  started.setHours(0, 0, 0, 0)
+  today.setHours(0, 0, 0, 0)
+  const diff = Math.floor((today.getTime() - started.getTime()) / 86400000)
+  return diff < 0 ? 0 : diff
 }
 
 function formatDateOnly(value) {
@@ -634,6 +641,34 @@ function getWithdrawAmount(order) {
 function getWithdrawUnit(order) {
   const tx = getTransactionByOrderId(order.id)
   return tx?.unit || order.unit || '-'
+}
+
+const filteredOrders = computed(() => {
+  const key = searchText.value.trim().toLowerCase()
+  return orders.value.filter((row) => {
+    const itemCode = row.items?.item_code?.toLowerCase() || ''
+    const itemName = row.items?.item_name?.toLowerCase() || ''
+    const usageType = String(row.items?.usage_type ?? '').toLowerCase().trim()
+    const note = row.note?.toLowerCase() || ''
+    const remark = row.remark?.toLowerCase() || ''
+    const matchSearch = !key || itemCode.includes(key) || itemName.includes(key) || usageType.includes(key) || note.includes(key) || remark.includes(key)
+    const matchStatus = selectedStatus.value === 'all' || row.status === selectedStatus.value
+    return matchSearch && matchStatus
+  })
+})
+
+function getStatusClass(status) {
+  if (status === 'approved') return 'bg-green-50 text-green-600 border-green-100 dark:bg-green-800/20 dark:border-green-800/20 dark:text-green-400'
+  if (status === 'rejected') return 'bg-red-50 text-red-600 border-red-100 dark:bg-red-800/20 dark:border-red-800/20 dark:text-red-400'
+  if (status === 'completed') return 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-800/20 dark:border-blue-800/20 dark:text-blue-400'
+  return 'bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-800/20 dark:border-amber-800/20 dark:text-amber-400'
+}
+
+function getStatusText(status) {
+  if (status === 'approved') return 'อนุมัติ'
+  if (status === 'rejected') return 'ไม่อนุมัติ'
+  if (status === 'completed') return 'เบิกแล้ว'
+  return 'รออนุมัติ'
 }
 
 function getMachineNumber(note) {
@@ -717,6 +752,9 @@ function openWithdrawModal(order) {
     return_date: '',
     note: order.note || '',
     remark: order.remark || '',
+    receive_by: order.receive_by || '',
+    inspector_by: order.inspector_by || '',
+    approver_by: order.approver_by || '',
     status: 'completed'
   }
   isWithdrawModalOpen.value = true
@@ -731,37 +769,39 @@ async function submitWithdraw() {
   saving.value = true
   try {
     const nextStatus = withdrawForm.value.status
-    const alreadyWithdrawn = transactions.value.some((row) => row.order_id === withdrawForm.value.order_id)
-    if (nextStatus === 'completed' && alreadyWithdrawn) {
-      alert('รายการนี้ถูกเบิกแล้ว ไม่สามารถเบิกซ้ำได้')
-      return
-    }
 
+    // 1. จัดการข้อมูลในตาราง transactions (เฉพาะกรณีที่สถานะเป็น completed)
     if (nextStatus === 'completed') {
-      const { error: txError } = await supabase.from('transactions').insert({
-        item_id: withdrawForm.value.item_id,
-        amount: Number(withdrawForm.value.amount),
-        unit: withdrawForm.value.unit,
-        category_id: withdrawForm.value.category_id || null,
-        document_url: withdrawForm.value.document_url || null,
-        image_url: withdrawForm.value.image_url || null,
-        return_date: withdrawForm.value.return_date || null,
-        note: withdrawForm.value.note || null,
-        remark: withdrawForm.value.remark || null,
-        order_id: withdrawForm.value.order_id,
-        created_by: auth.user.id,
-        updated_by: auth.user.id
-      })
-      if (txError) throw txError
+      const alreadyInTransactions = transactions.value.some((row) => row.order_id === withdrawForm.value.order_id)
+      if (!alreadyInTransactions) {
+        const { error: txError } = await supabase.from('transactions').insert({
+          item_id: withdrawForm.value.item_id,
+          amount: Number(withdrawForm.value.amount),
+          unit: withdrawForm.value.unit,
+          category_id: withdrawForm.value.category_id || null,
+          document_url: withdrawForm.value.document_url || null,
+          image_url: withdrawForm.value.image_url || null,
+          return_date: withdrawForm.value.return_date || null,
+          note: withdrawForm.value.note || null,
+          remark: withdrawForm.value.remark || null,
+          order_id: withdrawForm.value.order_id,
+          created_by: auth.user.id,
+          updated_by: auth.user.id
+        })
+        if (txError) throw txError
+      }
     }
 
+    // 2. อัปเดตสถานะในตาราง order_req เสมอ
     const { error: orderError } = await supabase
       .from('order_req')
       .update({
         status: nextStatus,
-        updated_by: auth.user.id,
+        updated_by: withdrawForm.value.approver_by || null,
         updated_at: new Date().toISOString(),
-        remark: withdrawForm.value.remark || null
+        remark: withdrawForm.value.remark || null,
+        receive_by: withdrawForm.value.receive_by || null,
+        inspector_by: withdrawForm.value.inspector_by || null
       })
       .eq('id', withdrawForm.value.order_id)
     if (orderError) throw orderError
@@ -801,65 +841,121 @@ async function submitWithdraw() {
     <div class="flex flex-col md:flex-row gap-4 mb-6 p-4 rounded-xl border" style="background: var(--color-bg-card); border-color: var(--color-border)">
       <div class="flex-1 relative">
         <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[14px]" style="color: var(--color-text-muted)"></i>
-        <input v-model="searchText" type="text" placeholder="ค้นหารหัส, ชื่อสินค้า, หมายเหตุ..." class="w-full pl-9 pr-4 py-2 bg-transparent border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all" style="border-color: var(--color-border); color: var(--color-text-primary)" />
+        <input v-model="searchText" type="text" placeholder="ค้นหารหัส, ชื่อสินค้า, ประเภทที่ใช้, หมายเหตุ..." class="w-full pl-9 pr-4 py-2 bg-transparent border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all" style="border-color: var(--color-border); color: var(--color-text-primary)" />
       </div>
     </div>
 
     <!-- main table (Grouped by request_id) -->
     <div class="rounded-xl border overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
       <div class="overflow-x-auto">
-        <table class="w-full text-[13px]">
+        <table class="w-full text-[13px] table-fixed border-collapse" style="border-color: var(--color-border)">
+          <colgroup>
+            <col class="w-[5.5rem] sm:w-28" />
+            <col style="width: 36%" />
+            <col style="width: 34%" />
+            <col class="w-[7.5rem]" />
+          </colgroup>
           <thead>
-            <tr style="border-bottom: 1px solid var(--color-border)">
-              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">รหัสคำขอเบิกพัสดุ</th>
-              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">จำนวนรายการ</th>
-              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ผู้ขอเบิก</th>
-              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">วันที่ขอ</th>
-              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">สถานะกลุ่ม</th>
-              <th class="text-center px-4 py-3 font-medium" style="color: var(--color-text-muted)">จัดการ</th>
+            <tr style="background: var(--color-bg-body); border-bottom: 1px solid var(--color-border)">
+              <th class="text-left px-2 py-2.5 font-medium text-[11px] leading-tight border-r align-middle" style="color: var(--color-text-muted); border-color: var(--color-border)">รหัสคำขอเบิกพัสดุ</th>
+              <th class="text-left px-2 py-2.5 font-medium border-r align-middle" style="color: var(--color-text-muted); border-color: var(--color-border)">จำนวนรายการ</th>
+              <th class="text-left px-2 py-2.5 font-medium whitespace-nowrap border-r align-middle" style="color: var(--color-text-muted); border-color: var(--color-border)">ผู้เบิก/วันที่</th>
+              <th class="text-center px-2 py-2.5 font-medium whitespace-nowrap align-middle" style="color: var(--color-text-muted)">จัดการ</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="group in groupedOrders" :key="group.requestId" class="border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors" style="border-color: var(--color-border)">
-              <td class="px-4 py-3">
-                <span class="font-bold text-blue-600">#{{ group.requestId || 'N/A' }}</span>
+            <tr
+              v-for="group in groupedOrders"
+              :key="group.requestId"
+              class="hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors border-b"
+              style="border-color: var(--color-border)"
+            >
+              <td class="px-2 py-2.5 align-middle whitespace-nowrap border-r" style="border-color: var(--color-border)">
+                <span class="font-bold text-blue-600 text-[12px]">#{{ group.requestId || 'N/A' }}</span>
               </td>
-              <td class="px-4 py-3">
-                <div class="flex flex-col">
-                  <span class="font-medium" style="color: var(--color-text-primary)">{{ group.totalItems }} รายการ</span>
-                  <div class="flex flex-wrap gap-1 mt-1">
-                    <span v-for="item in group.items.slice(0, 3)" :key="item.id" class="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-slate-700 rounded text-gray-600 dark:text-gray-300">
-                      {{ item.items?.item_name }}
-                    </span>
-                    <span v-if="group.items.length > 3" class="text-[10px] text-gray-400">...</span>
+              <td class="px-2 py-2.5 align-top min-w-0 border-r" style="border-color: var(--color-border)">
+                <div class="flex flex-col gap-1.5 min-w-0">
+                  <span class="font-medium shrink-0 text-[12px]" style="color: var(--color-text-primary)">{{ group.totalItems }} รายการ</span>
+                  <div
+                    class="rounded-md border overflow-hidden max-h-52 overflow-y-auto min-w-0"
+                    style="border-color: var(--color-border); background: var(--color-bg-body)"
+                  >
+                    <table class="w-full text-[11px] border-collapse table-fixed border-0" style="border-color: var(--color-border)">
+                      <colgroup>
+                        <col style="width: 34%" />
+                        <col style="width: 20%" />
+                        <col style="width: 26%" />
+                        <col style="width: 20%" />
+                      </colgroup>
+                      <thead>
+                        <tr style="border-bottom: 1px solid var(--color-border); background: var(--color-bg-card)">
+                          <th class="text-left px-2 py-1.5 font-semibold leading-tight border-r" style="color: var(--color-text-muted); border-color: var(--color-border)">รายการ</th>
+                          <th class="text-left px-2 py-1.5 font-semibold leading-tight border-r" style="color: var(--color-text-muted); border-color: var(--color-border)">ประเภท</th>
+                          <th class="text-left px-2 py-1.5 font-semibold leading-tight border-r" style="color: var(--color-text-muted); border-color: var(--color-border)">ประเภทที่ใช้</th>
+                          <th class="text-right px-2 py-1.5 font-semibold leading-tight whitespace-nowrap" style="color: var(--color-text-muted)">จำนวน</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="(line, lineIdx) in group.items"
+                          :key="line.id"
+                          class="align-top"
+                          :style="lineIdx < group.items.length - 1 ? 'border-bottom: 1px solid var(--color-border)' : ''"
+                        >
+                          <td class="px-2 py-1.5 min-w-0 border-r align-top" style="color: var(--color-text-primary); border-color: var(--color-border)">
+                            <span class="line-clamp-2 break-words leading-snug">{{ line.items?.item_name || '—' }}</span>
+                          </td>
+                          <td class="px-2 py-1.5 min-w-0 leading-snug break-words border-r align-top" style="color: var(--color-text-secondary); border-color: var(--color-border)">
+                            {{ line.category?.category_name || '—' }}
+                          </td>
+                          <td class="px-2 py-1.5 min-w-0 leading-snug break-words border-r align-top" style="color: var(--color-text-secondary); border-color: var(--color-border)">
+                            {{ String(line.items?.usage_type ?? '').trim() || '—' }}
+                          </td>
+                          <td class="px-2 py-1.5 text-right font-semibold whitespace-nowrap leading-snug align-top" style="color: var(--color-text-primary)">
+                            {{ line.amount != null ? line.amount : '—' }}<span v-if="line.unit" class="text-[10px] font-normal opacity-80"> {{ line.unit }}</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </td>
-              <td class="px-4 py-3">
-                <p style="color: var(--color-text-primary)">{{ userLabel(group.createdBy) }}</p>
+              <td class="px-2 py-2.5 align-middle min-w-0 border-r" style="border-color: var(--color-border)">
+                <div class="flex flex-row justify-between items-start gap-3 min-w-0">
+                  <div class="flex flex-col gap-0.5 items-start min-w-0 flex-1">
+                    <p class="text-[12px] leading-snug break-words font-medium" style="color: var(--color-text-primary)">{{ userLabel(group.createdBy) }}</p>
+                    <p class="text-[11px] leading-snug break-words" style="color: var(--color-text-secondary)">{{ userDepartment(group.createdBy) }}</p>
+                    <p class="text-[11px] leading-tight" style="color: var(--color-text-muted)">{{ formatDateTime(group.createdAt) }}</p>
+                    <span
+                      class="mt-1 px-2 py-0.5 rounded-full dark:bg-transparent dark:border-transparent text-[11px] border inline-block whitespace-nowrap"
+                      :class="getStatusClass(group.items[0].status)"
+                    >
+                      {{ getStatusText(group.items[0].status) }}
+                    </span>
+                  </div>
+                  <p
+                    class="shrink-0 self-start whitespace-nowrap text-[11px] leading-snug"
+                    style="color: var(--color-text-muted)"
+                    title="นับจำนวนวันตั้งแต่วันที่ยื่นคำขอถึงวันนี้ (ตามปฏิทิน)"
+                  >
+                    ผ่านไป <span class="font-bold tabular-nums" style="color: var(--color-text-primary)">{{ daysSinceRequest(group.createdAt) }}</span> วัน
+                  </p>
+                </div>
               </td>
-              <td class="px-4 py-3" style="color: var(--color-text-muted)">
-                {{ formatDateTime(group.createdAt) }}
-              </td>
-              <td class="px-4 py-3">
-                <span class="px-2 py-0.5 rounded-full dark:bg-transparent dark:border-transparent text-[11px] border" :class="getStatusClass(group.items[0].status)">
-                  {{ getStatusText(group.items[0].status) }}
-                </span>
-              </td>
-              <td class="px-4 py-3 text-center">
-                <div class="flex flex-wrap items-center justify-center gap-2">
-                  <button @click="openBillPreview(group)" class="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-blue-50 dark:bg-blue-700/20 dark:border-blue-700/30 dark:text-blue-400 text-blue-700 border border-blue-200 text-[11px] font-medium hover:bg-blue-100 transition-colors">
-                    <i class="fa-solid fa-file-lines text-[12px]"></i>
+              <td class="px-2 py-2.5 text-center align-middle">
+                <div class="flex flex-wrap items-center justify-center gap-1">
+                  <button @click="openBillPreview(group)" class="inline-flex items-center gap-1 px-2 py-1.5 rounded-md bg-blue-50 dark:bg-blue-700/20 dark:border-blue-700/30 dark:text-blue-400 text-blue-700 border border-blue-200 text-[11px] font-medium hover:bg-blue-100 transition-colors whitespace-nowrap">
+                    <i class="fa-solid fa-file-lines text-[11px]"></i>
                     <span>เบิกใบบิน</span>
                   </button>
                 </div>
               </td>
             </tr>
             <tr v-if="loading">
-              <td colspan="6" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
+              <td colspan="4" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
             </tr>
             <tr v-else-if="groupedOrders.length === 0">
-              <td colspan="6" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูลคำขอเบิก</td>
+              <td colspan="4" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูลคำขอเบิก</td>
             </tr>
           </tbody>
         </table>
@@ -1016,7 +1112,28 @@ async function submitWithdraw() {
                   </div>
 
                   <div v-if="!isBillPreviewCompleted" class="mb-3 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-3 gap-3">
+                      <div class="space-y-1 relative">
+                        <label class="text-[11px] font-medium text-blue-700">ผู้อนุมัติ (ค้นหาชื่อ/รหัส)</label>
+                        <input
+                          v-model="sharedApproverBy"
+                          @input="activeSearchField = 'approver_by'; searchEmployees($event.target.value)"
+                          type="text"
+                          class="w-full px-2 py-1.5 border rounded-lg text-[12px] focus:outline-none bg-white"
+                          style="border-color: var(--color-border)"
+                          placeholder="พิมพ์เพื่อค้นหา..."
+                        />
+                        <div v-if="activeSearchField === 'approver_by' && employeeResults.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                          <button
+                            v-for="emp in employeeResults" :key="emp.employee_code"
+                            @click="selectEmployee(emp, 'approver_by')"
+                            class="w-full text-left px-3 py-2 text-[12px] hover:bg-blue-50 border-b last:border-0"
+                          >
+                            <span class="font-medium">{{ emp.fullname }}</span>
+                            <span class="text-[10px] text-gray-500 ml-2">({{ emp.employee_code }})</span>
+                          </button>
+                        </div>
+                      </div>
                       <div class="space-y-1 relative">
                         <label class="text-[11px] font-medium text-blue-700">ผู้รับของ (ค้นหาชื่อ/รหัส)</label>
                         <input
@@ -1068,6 +1185,7 @@ async function submitWithdraw() {
                         <th rowspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-5 bg-gray-300">ลำดับ</th>
                         <th rowspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-21 bg-gray-300">รหัสสินค้า</th>
                         <th rowspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-29 bg-gray-300">รายการ</th>
+                        <th rowspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-22 bg-gray-300">ประเภทที่ใช้</th>
                         <th colspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-26 bg-gray-300">จำนวน (เบิก)</th>
                         <th colspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-28 bg-gray-300">จำนวนเงิน</th>
                         <th rowspan="2" class="border border-gray-400 py-0.1 text-center text-[10px] w-10 bg-gray-300">คืน</th>
@@ -1090,6 +1208,7 @@ async function submitWithdraw() {
                         <td class="border border-gray-400 px-1 py-1 text-center text-[9px]">{{ idx + 1 }}</td>
                         <td class="border border-gray-400 px-1 py-1 text-center font-mono text-[9px]">{{ order.items?.item_code || '-' }}</td>
                         <td class="border border-gray-400 px-1 py-1 text-center text-[9px]">{{ order.items?.item_name || '-' }}</td>
+                        <td class="border border-gray-400 px-1 py-1 text-center text-[8px] leading-tight">{{ String(order.items?.usage_type ?? '').trim() || '-' }}</td>
                         <td class="border border-gray-400 px-1 py-1 text-center font-bold text-blue-700 text-[9px]">
                           <span v-if="isBillPreviewCompleted">{{ getWithdrawAmount(order) }}</span>
                           <input
@@ -1177,10 +1296,10 @@ async function submitWithdraw() {
                       </tr>
                       <tr v-for="n in Math.max(0, 4 - billPreviewResult.items.length)" :key="'preview-empty-' + n">
                         <td class="border border-gray-400 px-1 py-1 text-center text-gray-400">{{ billPreviewResult.items.length + n }}</td>
-                        <td v-for="i in 9" :key="i" class="border border-gray-400 px-1 py-1"></td>
+                        <td v-for="i in 10" :key="i" class="border border-gray-400 px-1 py-1"></td>
                       </tr>
                       <tr class="bg-gray-50 font-semibold">
-                        <td colspan="3" class="border border-gray-400 px-0.5 py-0.5 text-center bg-gray-200">รวม</td>
+                        <td colspan="4" class="border border-gray-400 px-0.5 py-0.5 text-center bg-gray-200">รวม</td>
                         <td class="border border-gray-400 px-0.5 py-0.5 text-center text-blue-700">{{ getBillPreviewTotalAmount() }}</td>
                         <td class="border border-gray-400 px-0.5 py-0.5 text-center bg-gray-400"></td>
                         <td class="border border-gray-400 px-0.5 py-0.5 text-center bg-gray-400"></td>
@@ -1201,7 +1320,7 @@ async function submitWithdraw() {
                     <tbody>
                       <tr>
                         <td class="border border-gray-400 px-0.5 py-0 text-[9px]" style="height:40px; vertical-align:top;">{{ userLabel(billPreviewResult.items[0]?.created_by) }}</td>
-                        <td class="border border-gray-400 px-0.5 py-0 text-[9px]" style="height:40px; vertical-align:top;">{{ userLabel(billPreviewResult.items[0]?.updated_by) }}</td>
+                        <td class="border border-gray-400 px-0.5 py-0 text-[9px]" style="height:40px; vertical-align:top;">{{ sharedApproverBy || '' }}</td>
                         <td class="border border-gray-400 px-0.5 py-0 text-[9px]" style="height:40px; vertical-align:top;">{{ userLabel(billPreviewResult.items[0]?.updated_by) }}</td>
                         <td class="border border-gray-400 px-0.5 py-0 text-[9px]" style="height:40px; vertical-align:top;">{{ sharedReceiveBy || '' }}</td>
                         <td class="border border-gray-400 px-0.5 py-0 text-[9px]" style="height:40px; vertical-align:top;">{{ sharedInspectorBy || '' }}</td>
@@ -1213,7 +1332,7 @@ async function submitWithdraw() {
                         </td>
                         <td class="border border-gray-400 px-0.5 py-0.2">
                           <div class="text-[9px] text-gray-500 mb-0.2">ลงชื่อตัวบรรจง</div>
-                          <div class="border-b border-gray-300 text-[9px] pb-0.2">{{ userLabel(billPreviewResult.items[0]?.updated_by) }}</div>
+                          <div class="border-b border-gray-300 text-[9px] pb-0.2">{{ sharedApproverBy || '' }}</div>
                         </td>
                         <td class="border border-gray-400 px-0.5 py-0.2">
                           <div class="text-[9px] text-gray-500 mb-0.2">ลงชื่อตัวบรรจง</div>
@@ -1439,6 +1558,9 @@ async function submitWithdraw() {
                   <div>
                     <p class="font-medium text-[13px]" style="color: var(--color-text-primary)">{{ order.items?.item_name || '-' }}</p>
                     <p class="text-[11px]" style="color: var(--color-text-muted)">{{ order.items?.item_code || '-' }} · {{ order.category?.category_name || '-' }}</p>
+                    <p v-if="String(order.items?.usage_type ?? '').trim()" class="text-[11px] mt-0.5 text-amber-700 dark:text-amber-400/90">
+                      ประเภทที่ใช้: {{ String(order.items.usage_type).trim() }}
+                    </p>
                   </div>
                   <div class="flex items-center gap-2">
                     <span class="text-[11px]" :class="(order.items?.current_stock ?? 0) < order.amount ? 'text-red-500 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-400'">
@@ -1596,6 +1718,73 @@ async function submitWithdraw() {
               <label class="text-[13px] font-medium" style="color: var(--color-text-primary)">กำหนดส่งคืน (ถ้ามี)</label>
               <input v-model="withdrawForm.return_date" type="date" class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none focus:ring-1" style="border-color: var(--color-border); background: var(--color-bg-body)" />
             </div>
+
+            <div class="space-y-3 p-3 rounded-lg border bg-blue-50/50" style="border-color: var(--color-border)">
+              <div class="space-y-1 relative">
+                <label class="text-[11px] font-medium text-blue-700">ผู้อนุมัติ (ค้นหาชื่อ/รหัส)</label>
+                <input
+                  v-model="withdrawForm.approver_by"
+                  @input="activeSearchField = 'approver_by'; searchEmployees($event.target.value)"
+                  type="text"
+                  class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none bg-white"
+                  style="border-color: var(--color-border)"
+                  placeholder="พิมพ์เพื่อค้นหา..."
+                />
+                <div v-if="activeSearchField === 'approver_by' && employeeResults.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                  <button
+                    v-for="emp in employeeResults" :key="emp.employee_code"
+                    @click="withdrawForm.approver_by = emp.fullname; employeeResults = []; activeSearchField = null"
+                    class="w-full text-left px-3 py-2 text-[12px] hover:bg-blue-50 border-b last:border-0"
+                  >
+                    <span class="font-medium">{{ emp.fullname }}</span>
+                    <span class="text-[10px] text-gray-500 ml-2">({{ emp.employee_code }})</span>
+                  </button>
+                </div>
+              </div>
+              <div class="space-y-1 relative">
+                <label class="text-[11px] font-medium text-blue-700">ผู้รับของ (ค้นหาชื่อ/รหัส)</label>
+                <input
+                  v-model="withdrawForm.receive_by"
+                  @input="activeSearchField = 'receive_by'; searchEmployees($event.target.value)"
+                  type="text"
+                  class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none bg-white"
+                  style="border-color: var(--color-border)"
+                  placeholder="พิมพ์เพื่อค้นหา..."
+                />
+                <div v-if="activeSearchField === 'receive_by' && employeeResults.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                  <button
+                    v-for="emp in employeeResults" :key="emp.employee_code"
+                    @click="withdrawForm.receive_by = emp.fullname; employeeResults = []; activeSearchField = null"
+                    class="w-full text-left px-3 py-2 text-[12px] hover:bg-blue-50 border-b last:border-0"
+                  >
+                    <span class="font-medium">{{ emp.fullname }}</span>
+                    <span class="text-[10px] text-gray-500 ml-2">({{ emp.employee_code }})</span>
+                  </button>
+                </div>
+              </div>
+              <div class="space-y-1 relative">
+                <label class="text-[11px] font-medium text-blue-700">ผู้ตรวจรับ (ค้นหาชื่อ/รหัส)</label>
+                <input
+                  v-model="withdrawForm.inspector_by"
+                  @input="activeSearchField = 'inspector_by'; searchEmployees($event.target.value)"
+                  type="text"
+                  class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none bg-white"
+                  style="border-color: var(--color-border)"
+                  placeholder="พิมพ์เพื่อค้นหา..."
+                />
+                <div v-if="activeSearchField === 'inspector_by' && employeeResults.length > 0" class="absolute left-0 right-0 top-full mt-1 bg-white border rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                  <button
+                    v-for="emp in employeeResults" :key="emp.employee_code"
+                    @click="withdrawForm.inspector_by = emp.fullname; employeeResults = []; activeSearchField = null"
+                    class="w-full text-left px-3 py-2 text-[12px] hover:bg-blue-50 border-b last:border-0"
+                  >
+                    <span class="font-medium">{{ emp.fullname }}</span>
+                    <span class="text-[10px] text-gray-500 ml-2">({{ emp.employee_code }})</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div class="space-y-1">
               <label class="text-[13px] font-medium" style="color: var(--color-text-primary)">หมายเหตุ</label>
               <textarea v-model="withdrawForm.remark" rows="2" class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none focus:ring-1" style="border-color: var(--color-border); background: var(--color-bg-body)"></textarea>

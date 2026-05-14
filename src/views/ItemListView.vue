@@ -17,6 +17,7 @@ const categories = ref([])
 const loading = ref(true)
 const searchText = ref('')
 const selectedCategoryId = ref('all')
+const selectedUsageType = ref('all')
 
 // Barcode Download Mode
 const isBarcodeMode = ref(false)
@@ -47,6 +48,7 @@ const itemForm = ref({
   item_code: '',
   item_name: '',
   category_id: '',
+  usage_type: '',
   amount: 1,
   unit: '',
   remark: ''
@@ -123,12 +125,32 @@ function onRestockDocumentSelected(event) {
 }
 
 // Computed
+/** ค่าประเภทที่ใช้ที่ไม่ซ้ำจากรายการสินค้า (สำหรับ dropdown กรอง) */
+const usageTypeFilterMeta = computed(() => {
+  const set = new Set()
+  let hasEmpty = false
+  for (const item of items.value) {
+    const u = String(item.usage_type ?? '').trim()
+    if (!u) hasEmpty = true
+    else set.add(u)
+  }
+  return {
+    values: [...set].sort((a, b) => a.localeCompare(b, 'th')),
+    hasEmpty
+  }
+})
+
 const filteredItems = computed(() => {
   return items.value.filter(item => {
     const matchSearch = item.item_name.toLowerCase().includes(searchText.value.toLowerCase()) || 
                         item.item_code.toLowerCase().includes(searchText.value.toLowerCase())
     const matchCategory = selectedCategoryId.value === 'all' || item.category_id === selectedCategoryId.value
-    return matchSearch && matchCategory
+    const usage = String(item.usage_type ?? '').trim()
+    const matchUsage =
+      selectedUsageType.value === 'all' ||
+      (selectedUsageType.value === '__none__' && !usage) ||
+      (selectedUsageType.value !== '__none__' && usage === selectedUsageType.value)
+    return matchSearch && matchCategory && matchUsage
   })
 })
 
@@ -334,6 +356,7 @@ function openAddItemSidebar() {
     item_code: '',
     item_name: '',
     category_id: categories.value[0]?.id || '',
+    usage_type: '',
     amount: 1,
     unit: 'ชิ้น',
     remark: ''
@@ -376,6 +399,11 @@ async function saveItem() {
       const { error: updateItemError } = await supabase
         .from('items')
         .update({
+          item_name: itemForm.value.item_name,
+          category_id: itemForm.value.category_id,
+          usage_type: itemForm.value.usage_type,
+          unit: itemForm.value.unit,
+          remark: itemForm.value.remark,
           updated_by: auth.user.id,
           document_url: uploadedDocumentUrl || existingItem.document_url || null
         })
@@ -388,6 +416,7 @@ async function saveItem() {
           item_code: itemForm.value.item_code,
           item_name: itemForm.value.item_name,
           category_id: itemForm.value.category_id,
+          usage_type: itemForm.value.usage_type,
           unit: itemForm.value.unit,
           remark: itemForm.value.remark,
           document_url: uploadedDocumentUrl || null,
@@ -678,6 +707,24 @@ async function saveCategory() {
           <option v-for="cat in categories" :key="cat.id" :value="cat.id" style="background-color: var(--color-bg-card)">{{ cat.category_name }}</option>
         </select>
       </div>
+      <div class="w-full md:w-48">
+        <select
+          v-model="selectedUsageType"
+          class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all"
+          style="background-color: var(--color-bg-card); border-color: var(--color-border); color: var(--color-text-primary)"
+        >
+          <option value="all" style="background-color: var(--color-bg-card)">ทุกประเภทที่ใช้</option>
+          <option v-if="usageTypeFilterMeta.hasEmpty" value="__none__" style="background-color: var(--color-bg-card)">ไม่ระบุ</option>
+          <option
+            v-for="ut in usageTypeFilterMeta.values"
+            :key="ut"
+            :value="ut"
+            style="background-color: var(--color-bg-card)"
+          >
+            {{ ut }}
+          </option>
+        </select>
+      </div>
     </div>
 
     <!-- Table Section -->
@@ -701,6 +748,7 @@ async function saveCategory() {
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">รหัสสินค้า</th>
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ชื่อสินค้า</th>
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ประเภท</th>
+              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ประเภทที่ใช้</th>
               <th class="text-right px-4 py-3 font-medium" style="color: var(--color-text-muted)">จำนวนคงเหลือ</th>
               <th class="text-center px-4 py-3 font-medium" style="color: var(--color-text-muted)">ผู้เพิ่ม</th>
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">หมายเหตุ</th>
@@ -743,6 +791,9 @@ async function saveCategory() {
                 <span class="px-2 py-0.5 rounded-full text-[11px] bg-blue-50 dark:bg-blue-800/30 text-blue-700 hover:bg-blue-100 dark:text-blue-300 border border-blue-600 dark:border-blue-800/30 transition-colors cursor-w-resize">
                   {{ item.category?.category_name || 'ไม่มีประเภท' }}
                 </span>
+              </td>
+              <td class="px-4 py-3" style="color: var(--color-text-secondary)">
+                {{ item.usage_type || '-' }}
               </td>
               <td class="px-4 py-3 font-bold text-right">
                 <span
@@ -825,6 +876,10 @@ async function saveCategory() {
             <div class="space-y-1">
               <label class="text-[13px] font-medium" style="color: var(--color-text-primary)">ชื่อสินค้า</label>
               <input v-model="itemForm.item_name" placeholder="กรอกชื่อสินค้า" type="text" class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none focus:ring-1" style="border-color: var(--color-border); background: var(--color-bg-body)" />
+            </div>
+            <div class="space-y-1">
+              <label class="text-[13px] font-medium" style="color: var(--color-text-primary)">ประเภทที่ใช้</label>
+              <input v-model="itemForm.usage_type" placeholder="กรอกประเภทที่ใช้ (เช่น งานซ่อม, งานก่อสร้าง)" type="text" class="w-full px-3 py-2 border rounded-lg text-[13px] focus:outline-none focus:ring-1" style="border-color: var(--color-border); background: var(--color-bg-body)" />
             </div>
             <div class="grid grid-cols-2 gap-4">
               <div class="space-y-1">

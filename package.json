@@ -12,6 +12,8 @@
     "@supabase/supabase-js": "^2.102.0",
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "overlayscrollbars": "^2.15.1",
     "overlayscrollbars-vue": "^0.5.9",
     "pinia": "^3.0.4",

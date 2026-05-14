@@ -11,6 +11,8 @@ import EmployeeLisView from '@/views/EmployeeLisView.vue'
 import SystemusersLisView from '@/views/SystemusersLisView.vue'
 import UserLogsLisView from '@/views/userLogsLisView.vue'
 import ImportMoreListView from '@/views/ImportMoreListView.vue'
+import SummaryDetailView from '@/views/summary_detailView.vue'
+import InspectionView from '@/views/inspectionView.vue'
 import HomepageView from '@/views/localState/users/HomepageView.vue'
 import CreateOrderView from '@/views/localState/users/CreateOrderView.vue'
 import CreatePRView from '@/views/localState/users/CreatePRView.vue'
@@ -24,6 +26,7 @@ import AdminLogsView from '@/views/PrSystem/Views/adminLogsView.vue'
 const routes = [
   { path: '/', component: LoginView, meta: { requiresAuth: false } },
   { path: '/dashboard', component: DashboardView, meta: { requiresAuth: true, isAdmin: true } },
+  { path: '/reports', component: SummaryDetailView, meta: { requiresAuth: true, isAdmin: true } },
   { path: '/item-list', component: ItemListView, meta: { requiresAuth: true, isAdmin: true } },
   { path: '/inventory-imports', component: InventoryImportsView, meta: { requiresAuth: true, isAdmin: true } },
   { path: '/inventory-history', component: InventoryhistoryLisView, meta: { requiresAuth: true, isAdmin: true } },
@@ -34,6 +37,8 @@ const routes = [
   { path: '/system-users', component: SystemusersLisView, meta: { requiresAuth: true, isAdmin: true } },
   { path: '/logs', component: UserLogsLisView, meta: { requiresAuth: true, isAdmin: true } },
   { path: '/imports', component: ImportMoreListView, meta: { requiresAuth: true, isAdmin: true } },
+  { path: '/return', component: InspectionView, meta: { requiresAuth: true, isAdmin: true } },
+  { path: '/return-history', component: InspectionView, meta: { requiresAuth: true, isAdmin: true } },
   { path: '/u/home', component: HomepageView, meta: { requiresAuth: true } },
   { path: '/u/create', component: CreateOrderView, meta: { requiresAuth: true } },
   { path: '/u/create-pr', component: CreatePRView, meta: { requiresAuth: true } },

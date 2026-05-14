@@ -32,7 +32,7 @@ async function fetchData() {
     const [{ data: items, error: itemsError }, { data: imports, error: importsError }] = await Promise.all([
       supabase
         .from('items')
-        .select('id, item_code, item_name, document_url, current_stock, unit, remark, created_by, created_at, creator:system_users!created_by(fullname, emp_code)')
+        .select('id, item_code, item_name, usage_type, document_url, current_stock, unit, remark, created_by, created_at, creator:system_users!created_by(fullname, emp_code)')
         .order('created_at', { ascending: false }),
       supabase.from('inventory_imports').select('item_id, amount, unit, document_url, created_at').order('created_at', { ascending: true }),
     ])
@@ -72,7 +72,7 @@ const filteredRows = computed(() => {
   const key = searchText.value.trim().toLowerCase()
   if (!key) return rows.value
   return rows.value.filter((row) => {
-    const haystack = [row.item_code, row.item_name, row.unit, row.remark]
+    const haystack = [row.item_code, row.item_name, row.usage_type, row.unit, row.remark]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
@@ -117,7 +117,7 @@ function goNext() {
           v-model="searchText"
           @input="onFilterChanged"
           type="text"
-          placeholder="ค้นหาด้วยรหัสสินค้า, ชื่อสินค้า, หมายเหตุ..."
+          placeholder="ค้นหาด้วยรหัสสินค้า, ชื่อสินค้า, ประเภทที่ใช้, หมายเหตุ..."
           class="w-full pl-9 pr-4 py-2 bg-transparent border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all"
           style="border-color: var(--color-border); color: var(--color-text-primary)"
         />
@@ -151,11 +151,12 @@ function goNext() {
       </div>
 
       <div class="overflow-x-auto">
-        <table class="w-full text-[13px] min-w-[980px]">
+        <table class="w-full text-[13px] min-w-[1080px]">
           <thead>
             <tr style="border-bottom: 1px solid var(--color-border)">
               <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">วันที่-เวลา</th>
               <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">สินค้า</th>
+              <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ประเภทที่ใช้</th>
               <th class="text-right px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">จำนวน</th>
               <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">หน่วย</th>
               <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ผู้ดำเนินการ</th>
@@ -177,6 +178,9 @@ function goNext() {
               <td class="px-4 py-3">
                 <p class="font-medium" style="color: var(--color-text-primary)">{{ row.item_name || '-' }}</p>
                 <p class="text-[11px]" style="color: var(--color-text-muted)">{{ row.item_code || '-' }}</p>
+              </td>
+              <td class="px-4 py-3" style="color: var(--color-text-secondary)">
+                {{ String(row.usage_type ?? '').trim() || '-' }}
               </td>
               <td class="px-4 py-3 text-right font-semibold text-emerald-600">
                 {{ row.first_import_amount != null ? row.first_import_amount : '—' }}
@@ -201,10 +205,10 @@ function goNext() {
               </td>
             </tr>
             <tr v-if="loading">
-              <td colspan="8" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
+              <td colspan="9" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
             </tr>
             <tr v-else-if="!loading && totalRows === 0">
-              <td colspan="8" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูลประวัติการนำเข้า</td>
+              <td colspan="9" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูลประวัติการนำเข้า</td>
             </tr>
           </tbody>
         </table>

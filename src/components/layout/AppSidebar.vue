@@ -11,7 +11,7 @@ const menuGroups = [
     label: 'ภาพรวม',
     items: [
       { label: 'แดชบอร์ด', icon: 'fa-gauge-high', path: '/dashboard' },
-      // { label: 'รายงาน', icon: 'fa-chart-line', path: '/reports' },
+      { label: 'สรุปรายละเอียด', icon: 'fa-chart-line', path: '/reports' },
     ]
   },
   {
@@ -29,6 +29,13 @@ const menuGroups = [
       { label: 'เบิกสินค้า', icon: 'fa-arrow-up-from-bracket', path: '/withdraw' },
       { label: 'ประวัติการเบิก', icon: 'fa-clock-rotate-left', path: '/history' },
       { label: 'ข้อมูลการส่งคืน', icon: 'fa-arrow-rotate-left', path: '/order-list' },
+    ]
+  },
+  {
+    label: 'การกวดรับ',
+    items: [
+      { label: 'ใบกวดรับ', icon: 'fa-file-signature', path: '/return' },
+      { label: 'ประวัติการกวดรับ', icon: 'fa-clipboard-list', path: '/return-history' },
     ]
   },
   {

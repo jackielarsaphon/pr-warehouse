@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
-import { useRouter } from 'vue-router'
 
 // Company Logos
 import logoThaiDrill from '@/assets/thaidrill_company.png'
@@ -19,7 +18,6 @@ const props = defineProps({
 
 const emit = defineEmits(['back', 'submit'])
 const auth = useAuthStore()
-const router = useRouter()
 
 // ─── Form State ──────────────────────────────────────────────────────────────
 const mrNumber = ref('')
@@ -197,8 +195,8 @@ function exportToPdf() {
   window.print()
 }
 
-function finishAndGoHome() {
-  router.push('/u/home')
+function finishAndBack() {
+  emit('back')
 }
 
 </script>
@@ -604,8 +602,8 @@ function finishAndGoHome() {
               <i class="fa-solid fa-file-invoice mr-2"></i>
               สร้างใบบิล
             </button>
-            <button @click="finishAndGoHome" class="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-200 transition-all">
-              กลับหน้าหลัก
+            <button @click="finishAndBack" class="w-full py-3.5 rounded-2xl bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-200 transition-all">
+              กลับ
             </button>
           </div>
         </div>
@@ -618,7 +616,7 @@ function finishAndGoHome() {
         <i class="fa-solid fa-file-pdf mr-2"></i>
         ส่งออกเป็น PDF / พิมพ์
       </button>
-      <button @click="finishAndGoHome" class="px-8 py-3.5 rounded-2xl bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-gray-300 font-bold hover:bg-gray-300 transition-all">
+      <button @click="finishAndBack" class="px-8 py-3.5 rounded-2xl bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-gray-300 font-bold hover:bg-gray-300 transition-all">
         เสร็จสิ้น
       </button>
     </div>

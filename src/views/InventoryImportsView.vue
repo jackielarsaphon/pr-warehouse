@@ -18,7 +18,7 @@ async function fetchImports() {
       .from('inventory_imports')
       .select(`
         *,
-        item:items(item_code, item_name),
+        item:items(item_code, item_name, usage_type),
         creator:system_users!created_by(fullname)
       `)
       .eq('note', 'เติมสินค้า (Restock)')
@@ -70,6 +70,7 @@ function exportToExcel() {
     'วันที่-เวลา': new Date(imp.created_at).toLocaleString('th-TH'),
     'รหัสสินค้า': imp.item?.item_code || '-',
     'ชื่อสินค้า': imp.item?.item_name || '-',
+    'ประเภทที่ใช้': String(imp.item?.usage_type ?? '').trim() || '-',
     'จำนวน': imp.amount,
     'หน่วย': imp.unit,
     'ผู้ดำเนินการ': imp.creator?.fullname || '-',
@@ -83,8 +84,8 @@ function exportToExcel() {
   
   // Set column widths
   const wscols = [
-    {wch: 20}, {wch: 15}, {wch: 25}, {wch: 10}, 
-    {wch: 10}, {wch: 20}, {wch: 20}, {wch: 30}
+    {wch: 20}, {wch: 15}, {wch: 25}, {wch: 18},
+    {wch: 10}, {wch: 10}, {wch: 20}, {wch: 20}, {wch: 30}
   ]
   worksheet['!cols'] = wscols
 
@@ -153,6 +154,7 @@ function formatDate(iso) {
             <tr style="border-bottom: 1px solid var(--color-border)">
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">วันที่-เวลา</th>
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">สินค้า</th>
+              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ประเภทที่ใช้</th>
               <th class="text-right px-4 py-3 font-medium" style="color: var(--color-text-muted)">จำนวน</th>
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">หน่วย</th>
               <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ผู้ดำเนินการ</th>
@@ -163,13 +165,13 @@ function formatDate(iso) {
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8" class="px-4 py-12 text-center">
+              <td colspan="9" class="px-4 py-12 text-center">
                 <i class="fa-solid fa-spinner fa-spin text-2xl mb-2 text-blue-500"></i>
                 <p style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</p>
               </td>
             </tr>
             <tr v-else-if="filteredImports.length === 0">
-              <td colspan="8" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">
+              <td colspan="9" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">
                 <i class="fa-solid fa-folder-open text-2xl mb-2 opacity-20"></i>
                 <p>ไม่พบประวัติการเติมสินค้า (Restock)</p>
               </td>
@@ -183,6 +185,9 @@ function formatDate(iso) {
               <td class="px-4 py-3">
                 <div class="font-medium" style="color: var(--color-text-primary)">{{ imp.item?.item_name }}</div>
                 <div class="text-[11px] font-mono mt-0.5" style="color: var(--color-text-muted)">{{ imp.item?.item_code }}</div>
+              </td>
+              <td class="px-4 py-3" style="color: var(--color-text-secondary)">
+                {{ String(imp.item?.usage_type ?? '').trim() || '-' }}
               </td>
               <td class="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-500">
                 +{{ imp.amount }}

@@ -29,11 +29,20 @@ const lowStockCount     = ref(0)
 const outOfStockCount   = ref(0)
 const uniqueRequesterCount = ref(0)
 
+// Modal State
+const isDetailModalOpen = ref(false)
+const modalTitle = ref('')
+const modalData = ref([])
+const modalLoading = ref(false)
+const modalSearchText = ref('')
+const modalType = ref('') // 'items', 'imports', 'tx', 'pending', 'low_stock', 'approved', 'rejected', 'completed', 'all_orders', 'category_summary', 'items_by_category', 'picked_orders'
+const selectedCategoryName = ref('')
+
 // Trend
 const trendImports  = ref({ text: '—', type: 'neutral' })
 const trendTx       = ref({ text: '—', type: 'neutral' })
-const trendPending  = ref({ text: '—', type: 'neutral' })
-const trendApproval = ref({ text: '—', type: 'neutral' })
+const trendPending  = ref({ text: '—', type: 'neutral' }) // รอเบิกสินค้า
+const trendApproval = ref({ text: '—', type: 'neutral' }) // อัตราเบิกสำเร็จ
 
 // Table & List data
 const recentTransactions  = ref([])
@@ -215,7 +224,7 @@ async function fetchDashboardData() {
     const approvalRate = (approvedRes.count??0) + (rejectedRes.count??0) > 0
       ? Math.round(((approvedRes.count??0) / ((approvedRes.count??0) + (rejectedRes.count??0))) * 100)
       : 0
-    trendApproval.value = { text: `อนุมัติ ${approvalRate}%`, type: approvalRate >= 70 ? 'up' : approvalRate >= 40 ? 'neutral' : 'down' }
+    trendApproval.value = { text: `เบิกแล้ว ${approvalRate}%`, type: approvalRate >= 70 ? 'up' : approvalRate >= 40 ? 'neutral' : 'down' }
 
     // ── Time-series ──
     const impByDay = {}, txByDay = {}
@@ -343,14 +352,26 @@ function buildCharts() {
 
   // Order status pie
   if (orderPieRef.value) {
-    const pieData = [approvedOrders.value, pendingOrders.value, rejectedOrders.value, completedOrders.value]
+    const pieData = [pendingOrders.value, (approvedOrders.value + completedOrders.value)]
     orderPie = new Chart(orderPieRef.value, {
       type: 'doughnut',
       data: {
-        labels: ['อนุมัติ','รอดำเนินการ','ปฏิเสธ','เสร็จสิ้น'],
-        datasets: [{ data: pieData, backgroundColor: ['#10B981','#F59E0B','#EF4444','#3B82F6'], borderWidth: 2, borderColor: '#fff', hoverOffset: 5 }],
+        labels: ['รอเบิก', 'เบิกแล้ว'],
+        datasets: [{ data: pieData, backgroundColor: ['#F59E0B', '#10B981'], borderWidth: 2, borderColor: '#fff', hoverOffset: 5 }],
       },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 8, font: { size: 10 } } } } },
+      options: { 
+        responsive: true, 
+        maintainAspectRatio: false, 
+        cutout: '60%', 
+        plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 8, font: { size: 10 } } } },
+        onClick: (evt, elements) => {
+          if (elements.length > 0) {
+            const index = elements[0].index
+            if (index === 0) openDetailModal('pending')
+            else openDetailModal('picked_orders')
+          }
+        }
+      },
     })
   }
 }
@@ -384,8 +405,130 @@ function statusColor(s) {
   return m[s] || '#64748B'
 }
 function statusLabel(s) {
-  const m = { pending: 'รอ', approved: 'อนุมัติ', rejected: 'ปฏิเสธ', completed: 'เสร็จ' }
+  const m = { pending: 'รอเบิก', approved: 'เบิกแล้ว', rejected: 'ปฏิเสธ', completed: 'เบิกแล้ว' }
   return m[s] || s
+}
+
+// ─── Modal Computed ───────────────────────────────────────────────────────────
+const filteredModalData = computed(() => {
+  if (!modalSearchText.value) return modalData.value
+  const search = modalSearchText.value.toLowerCase()
+  
+  return modalData.value.filter(item => {
+    // Search based on common fields across different types
+    const itemCode = (item.item_code || item.items?.item_code || '').toLowerCase()
+    const itemName = (item.item_name || item.items?.item_name || '').toLowerCase()
+    const creator = (item.creator?.fullname || '').toLowerCase()
+    const remark = (item.remark || '').toLowerCase()
+    const company = (item.company || '').toLowerCase()
+    const requestId = String(item.request_id || '').toLowerCase()
+
+    return itemCode.includes(search) || 
+           itemName.includes(search) || 
+           creator.includes(search) || 
+           remark.includes(search) ||
+           company.includes(search) ||
+           requestId.includes(search)
+  })
+})
+
+// ─── Modal Logic ──────────────────────────────────────────────────────────────
+async function openDetailModal(type, filterId = null, filterName = '') {
+  modalType.value = type
+  isDetailModalOpen.value = true
+  modalLoading.value = true
+  modalData.value = []
+  modalSearchText.value = ''
+  selectedCategoryName.value = filterName
+  
+  const { from, to } = getDateRange()
+  const fromISO = from.toISOString()
+  const toISO = to.toISOString()
+
+  try {
+    let query
+    switch (type) {
+      case 'items':
+        modalTitle.value = 'รายการสินค้าทั้งหมด'
+        query = supabase.from('items').select('*, category(category_name), creator:system_users!created_by(fullname)').order('item_name')
+        break
+      case 'items_by_category':
+        modalTitle.value = `รายการสินค้าในหมวด: ${filterName}`
+        query = supabase.from('items').select('*, category(category_name), creator:system_users!created_by(fullname)')
+                .eq('category_id', filterId).order('item_name')
+        break
+      case 'imports':
+        modalTitle.value = `รายการนำเข้า (${getDateRange().label})`
+        query = supabase.from('inventory_imports').select('*, items(item_code, item_name), creator:system_users!created_by(fullname)')
+                .gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'tx':
+        modalTitle.value = `รายการเบิกจ่าย (${getDateRange().label})`
+        query = supabase.from('transactions').select('*, items(item_code, item_name), creator:system_users!created_by(fullname)')
+                .gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'pending':
+        modalTitle.value = 'รายการคำขอรอเบิกสินค้า'
+        query = supabase.from('order_req').select('*, items(item_name), creator:system_users!created_by(fullname)')
+                .eq('status', 'pending').order('created_at', { ascending: false })
+        break
+      case 'low_stock':
+        modalTitle.value = 'สินค้าสต็อกต่ำ/หมด'
+        query = supabase.from('items').select('*, category(category_name)')
+                .lte('current_stock', 10).order('current_stock', { ascending: true })
+        break
+      case 'approved':
+        modalTitle.value = `คำขอที่อนุมัติ (${getDateRange().label})`
+        query = supabase.from('order_req').select('*, items(item_name), creator:system_users!created_by(fullname)')
+                .eq('status', 'approved').gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'rejected':
+        modalTitle.value = `คำขอที่ปฏิเสธ (${getDateRange().label})`
+        query = supabase.from('order_req').select('*, items(item_name), creator:system_users!created_by(fullname)')
+                .eq('status', 'rejected').gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'completed':
+        modalTitle.value = `คำขอที่เสร็จสิ้น (${getDateRange().label})`
+        query = supabase.from('order_req').select('*, items(item_name), creator:system_users!created_by(fullname)')
+                .eq('status', 'completed').gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'all_orders':
+        modalTitle.value = `รายการคำขอทั้งหมด (${getDateRange().label})`
+        query = supabase.from('order_req').select('*, items(item_code, item_name), creator:system_users!created_by(fullname)')
+                .gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'picked_orders':
+        modalTitle.value = `รายการที่เบิกแล้ว (${getDateRange().label})`
+        query = supabase.from('order_req').select('*, items(item_code, item_name), creator:system_users!created_by(fullname)')
+                .in('status', ['approved', 'completed']).gte('created_at', fromISO).lte('created_at', toISO).order('created_at', { ascending: false })
+        break
+      case 'category_summary':
+        modalTitle.value = 'สรุปรายการสินค้าตามหมวดหมู่'
+        // We'll handle data processing after fetching
+        query = supabase.from('category').select('*, items(current_stock)')
+        break
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+    
+    if (type === 'category_summary') {
+      // Process category data to include counts
+      modalData.value = data.map(cat => ({
+        id: cat.id,
+        category_name: cat.category_name,
+        sku_count: cat.items?.length || 0,
+        total_stock: (cat.items || []).reduce((sum, item) => sum + (item.current_stock || 0), 0),
+        remark: cat.remark
+      })).sort((a, b) => b.sku_count - a.sku_count)
+    } else {
+      modalData.value = data
+    }
+  } catch (err) {
+    console.error('Error fetching modal data:', err.message)
+  } finally {
+    modalLoading.value = false
+  }
 }
 
 onMounted(() => fetchDashboardData())
@@ -457,7 +600,7 @@ onUnmounted(() => destroyCharts())
       <!-- ── Row 1: KPI Cards (8 cards) ──────────────────────────────────── -->
       <div class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3 mb-5">
         <!-- สินค้าทั้งหมด -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('items')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">สินค้าทั้งหมด</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(59,130,246,0.1)">
@@ -469,7 +612,7 @@ onUnmounted(() => destroyCharts())
         </div>
 
         <!-- นำเข้าช่วงนี้ -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('imports')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">นำเข้าช่วงนี้</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(16,185,129,0.1)">
@@ -481,7 +624,7 @@ onUnmounted(() => destroyCharts())
         </div>
 
         <!-- เบิกจ่ายช่วงนี้ -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('tx')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">เบิกจ่ายช่วงนี้</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(245,158,11,0.1)">
@@ -492,20 +635,20 @@ onUnmounted(() => destroyCharts())
           <p class="text-[10px] truncate" :style="trendTx.type==='up'?'color:#10B981':trendTx.type==='down'?'color:#EF4444':'color: var(--color-text-muted)'">{{ trendTx.text }}</p>
         </div>
 
-        <!-- คำขอรออนุมัติ -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <!-- คำขอรอเบิกสินค้า -->
+        <div @click="openDetailModal('pending')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
-            <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">รออนุมัติ</span>
+            <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">รอเบิกสินค้า</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(245,158,11,0.1)">
               <i class="fa-solid fa-clock text-[11px]" style="color:#F59E0B"></i>
             </div>
           </div>
           <p class="text-[26px] font-bold leading-none" style="color: #F59E0B">{{ pendingOrders.toLocaleString() }}</p>
-          <p class="text-[10px]" style="color: var(--color-text-muted)">คำขอรอดำเนินการ</p>
+          <p class="text-[10px]" style="color: var(--color-text-muted)">คำขอรอเบิกสินค้า</p>
         </div>
 
         <!-- ปริมาณนำเข้า -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('imports')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">ปริมาณนำเข้า</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(6,182,212,0.1)">
@@ -517,7 +660,7 @@ onUnmounted(() => destroyCharts())
         </div>
 
         <!-- ปริมาณเบิก -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('tx')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">ปริมาณเบิก</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(236,72,153,0.1)">
@@ -529,7 +672,7 @@ onUnmounted(() => destroyCharts())
         </div>
 
         <!-- สต็อกต่ำ -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" :style="`background: var(--color-bg-card); border-color: ${lowStockCount+outOfStockCount > 0 ? '#FCA5A5' : 'var(--color-border)'}`">
+        <div @click="openDetailModal('low_stock')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" :style="`background: var(--color-bg-card); border-color: ${lowStockCount+outOfStockCount > 0 ? '#FCA5A5' : 'var(--color-border)'}`">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">สต็อกต่ำ</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(239,68,68,0.1)">
@@ -541,7 +684,7 @@ onUnmounted(() => destroyCharts())
         </div>
 
         <!-- อัตราอนุมัติ -->
-        <div class="col-span-1 rounded-xl border p-3 flex flex-col gap-1" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('all_orders')" class="col-span-1 rounded-xl border p-3 flex flex-col gap-1 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium" style="color: var(--color-text-muted)">อัตราอนุมัติ</span>
             <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background: rgba(139,92,246,0.1)">
@@ -557,12 +700,15 @@ onUnmounted(() => destroyCharts())
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <!-- Order status summary -->
         <div class="rounded-xl border p-3" style="background: var(--color-bg-card); border-color: var(--color-border)">
-          <p class="text-[11px] font-medium mb-2" style="color: var(--color-text-muted)">สถานะคำขอเบิก</p>
+          <p class="text-[11px] font-medium mb-2" style="color: var(--color-text-muted)">สถานะ Order</p>
           <div class="flex gap-2 flex-wrap">
-            <div v-for="[label, val, color] in [['รอ', pendingOrders, '#F59E0B'], ['อนุมัติ', approvedOrders, '#10B981'], ['ปฏิเสธ', rejectedOrders, '#EF4444'], ['เสร็จ', completedOrders, '#3B82F6']]" :key="label"
-              class="flex-1 min-w-[44px] rounded-lg p-2 text-center" :style="`background: ${color}18`">
-              <p class="text-[18px] font-bold" :style="`color:${color}`">{{ val }}</p>
-              <p class="text-[9px] font-medium" :style="`color:${color}`">{{ label }}</p>
+            <div @click="openDetailModal('pending')" class="flex-1 min-w-[44px] rounded-lg p-2 text-center cursor-pointer hover:opacity-70 transition-all" style="background: #F59E0B18">
+              <p class="text-[18px] font-bold" style="color:#F59E0B">{{ pendingOrders }}</p>
+              <p class="text-[9px] font-medium" style="color:#F59E0B">รอเบิก</p>
+            </div>
+            <div @click="openDetailModal('picked_orders')" class="flex-1 min-w-[44px] rounded-lg p-2 text-center cursor-pointer hover:opacity-70 transition-all" style="background: #10B98118">
+              <p class="text-[18px] font-bold" style="color:#10B981">{{ approvedOrders + completedOrders }}</p>
+              <p class="text-[9px] font-medium" style="color:#10B981">เบิกแล้ว</p>
             </div>
           </div>
         </div>
@@ -609,7 +755,7 @@ onUnmounted(() => destroyCharts())
         </div>
 
         <!-- Requester activity -->
-        <div class="rounded-xl border p-3" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div @click="openDetailModal('tx')" class="rounded-xl border p-3 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <p class="text-[11px] font-medium mb-2" style="color: var(--color-text-muted)">กิจกรรมการเบิก</p>
           <div class="grid grid-cols-2 gap-1">
             <div class="rounded-lg p-2" style="background:rgba(59,130,246,0.08)">
@@ -647,12 +793,12 @@ onUnmounted(() => destroyCharts())
 
         <!-- Donut + Order Pie side by side -->
         <div class="lg:col-span-5 grid grid-cols-2 gap-4">
-          <div class="rounded-xl border p-4" style="background: var(--color-bg-card); border-color: var(--color-border)">
+          <div @click="openDetailModal('category_summary')" class="rounded-xl border p-4 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
             <p class="text-[12px] font-semibold mb-1" style="color: var(--color-text-primary)">สินค้าตามหมวด</p>
             <p class="text-[10px] mb-2" style="color: var(--color-text-muted)">จำนวน SKU</p>
             <div class="h-36"><canvas ref="donutChartRef"></canvas></div>
           </div>
-          <div class="rounded-xl border p-4" style="background: var(--color-bg-card); border-color: var(--color-border)">
+          <div @click="openDetailModal('all_orders')" class="rounded-xl border p-4 cursor-pointer hover:shadow-md transition-all active:scale-95" style="background: var(--color-bg-card); border-color: var(--color-border)">
             <p class="text-[12px] font-semibold mb-1" style="color: var(--color-text-primary)">สถานะ Order</p>
             <p class="text-[10px] mb-2" style="color: var(--color-text-muted)">ช่วงที่เลือก</p>
             <div class="h-36"><canvas ref="orderPieRef"></canvas></div>
@@ -800,5 +946,147 @@ onUnmounted(() => destroyCharts())
         </div>
       </div>
     </template>
+
+    <!-- ── Detail Modal ─────────────────────────────────────────────────── -->
+    <div v-if="isDetailModalOpen" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="isDetailModalOpen = false"></div>
+      <div class="relative w-full max-w-5xl max-h-[85vh] shadow-2xl rounded-2xl flex flex-col overflow-hidden" style="background: var(--color-bg-card)">
+        <div class="px-6 py-4 border-b flex items-center justify-between" style="border-color: var(--color-border)">
+          <h2 class="text-[16px] font-bold" style="color: var(--color-text-primary)">
+            <i class="fa-solid fa-list-ul mr-2 text-blue-500"></i>{{ modalTitle }}
+          </h2>
+          <div class="flex items-center gap-4">
+            <div v-if="!modalLoading && modalData.length > 0" class="relative">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[12px] text-gray-400"></i>
+              <input 
+                v-model="modalSearchText"
+                type="text" 
+                placeholder="ค้นหาในตาราง..." 
+                class="pl-9 pr-4 py-1.5 border rounded-lg text-[12px] focus:outline-none focus:ring-1 transition-all w-48 sm:w-64"
+                style="border-color: var(--color-border); background: var(--color-bg-body); color: var(--color-text-primary)"
+              />
+            </div>
+            <button @click="isDetailModalOpen = false" class="p-2 hover:bg-gray-100 dark:hover:bg-slate-700/50 rounded-lg transition-colors">
+              <i class="fa-solid fa-xmark" style="color: var(--color-text-muted)"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-auto p-4 sm:p-6">
+          <div v-if="modalLoading" class="flex flex-col items-center justify-center py-20">
+            <i class="fa-solid fa-spinner fa-spin text-2xl mb-3 text-blue-500"></i>
+            <p class="text-[13px]" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</p>
+          </div>
+          
+          <div v-else-if="filteredModalData.length === 0" class="flex flex-col items-center justify-center py-20">
+            <i class="fa-solid fa-magnifying-glass text-2xl mb-3 text-gray-300"></i>
+            <p class="text-[13px]" style="color: var(--color-text-muted)">ไม่พบข้อมูลที่ค้นหา</p>
+          </div>
+
+          <div v-else class="overflow-x-auto border rounded-xl" style="border-color: var(--color-border)">
+            <table class="w-full text-[13px]">
+              <thead class="bg-gray-50 dark:bg-slate-800/50">
+                <tr style="border-bottom: 1px solid var(--color-border)">
+                  <!-- Columns based on modalType -->
+                  <template v-if="modalType === 'items' || modalType === 'low_stock' || modalType === 'items_by_category'">
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">รหัสสินค้า</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ชื่อสินค้า</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ประเภท</th>
+                    <th class="text-right px-4 py-3 font-semibold" style="color: var(--color-text-muted)">จำนวนคงเหลือ</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">หน่วย</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ประเภทที่ใช้</th>
+                  </template>
+                  
+                  <template v-else-if="modalType === 'imports' || modalType === 'tx'">
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">วันที่</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">รหัสสินค้า</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ชื่อสินค้า</th>
+                    <th class="text-right px-4 py-3 font-semibold" style="color: var(--color-text-muted)">จำนวน</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">หน่วย</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ผู้ดำเนินการ</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">หมายเหตุ</th>
+                  </template>
+
+                  <template v-else-if="['pending', 'approved', 'rejected', 'completed', 'all_orders', 'picked_orders'].includes(modalType)">
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">เลขที่</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">รหัสสินค้า</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ชื่อสินค้า</th>
+                    <th class="text-right px-4 py-3 font-semibold" style="color: var(--color-text-muted)">จำนวน</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">หน่วยงาน</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ผู้ขอเบิก</th>
+                    <th class="text-center px-4 py-3 font-semibold" style="color: var(--color-text-muted)">สถานะ</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">วันที่ขอ</th>
+                  </template>
+
+                  <template v-else-if="modalType === 'category_summary'">
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">ชื่อหมวดหมู่</th>
+                    <th class="text-right px-4 py-3 font-semibold" style="color: var(--color-text-muted)">จำนวนรายการ (SKU)</th>
+                    <th class="text-right px-4 py-3 font-semibold" style="color: var(--color-text-muted)">สต็อกรวมในหมวด</th>
+                    <th class="text-left px-4 py-3 font-semibold" style="color: var(--color-text-muted)">หมายเหตุ</th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody class="divide-y" style="border-color: var(--color-border)">
+                <tr v-for="row in filteredModalData" :key="row.id" class="hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors">
+                  <!-- Data cells based on modalType -->
+                  <template v-if="modalType === 'items' || modalType === 'low_stock' || modalType === 'items_by_category'">
+                    <td class="px-4 py-3 font-mono text-[12px]" style="color: var(--color-text-muted)">{{ row.item_code }}</td>
+                    <td class="px-4 py-3 font-medium" style="color: var(--color-text-primary)">{{ row.item_name }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.category?.category_name || '-' }}</td>
+                    <td class="px-4 py-3 text-right font-bold" :class="row.current_stock <= 10 ? 'text-red-500' : 'text-green-500'">{{ row.current_stock }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.unit }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.usage_type || '-' }}</td>
+                  </template>
+
+                  <template v-else-if="modalType === 'imports' || modalType === 'tx'">
+                    <td class="px-4 py-3 text-[12px]" style="color: var(--color-text-muted)">{{ fmtDateTimeShort(row.created_at) }}</td>
+                    <td class="px-4 py-3 font-mono text-[12px]" style="color: var(--color-text-muted)">{{ row.items?.item_code || '-' }}</td>
+                    <td class="px-4 py-3 font-medium" style="color: var(--color-text-primary)">{{ row.items?.item_name || '-' }}</td>
+                    <td class="px-4 py-3 text-right font-bold text-blue-500">{{ row.amount }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.unit }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.creator?.fullname || '-' }}</td>
+                    <td class="px-4 py-3 max-w-[150px] truncate" style="color: var(--color-text-muted)" :title="row.remark">{{ row.remark || '-' }}</td>
+                  </template>
+
+                  <template v-else-if="['pending', 'approved', 'rejected', 'completed', 'all_orders', 'picked_orders'].includes(modalType)">
+                    <td class="px-4 py-3 font-mono text-[12px]" style="color: var(--color-text-muted)">#{{ row.request_id }}</td>
+                    <td class="px-4 py-3 font-mono text-[12px]" style="color: var(--color-text-muted)">{{ row.items?.item_code || '-' }}</td>
+                    <td class="px-4 py-3 font-medium" style="color: var(--color-text-primary)">{{ row.items?.item_name || '-' }}</td>
+                    <td class="px-4 py-3 text-right font-bold text-blue-500">{{ row.amount }} {{ row.unit }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.company || '-' }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-secondary)">{{ row.creator?.fullname || '-' }}</td>
+                    <td class="px-4 py-3 text-center">
+                      <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold" :style="`background: ${statusColor(row.status)}18; color: ${statusColor(row.status)}`">{{ statusLabel(row.status) }}</span>
+                    </td>
+                    <td class="px-4 py-3 text-[12px]" style="color: var(--color-text-muted)">{{ fmtDateTimeShort(row.created_at) }}</td>
+                  </template>
+
+                  <template v-else-if="modalType === 'category_summary'">
+                    <td class="px-4 py-3 font-medium" style="color: var(--color-text-primary)">
+                      <button @click="openDetailModal('items_by_category', row.id, row.category_name)" class="hover:text-blue-500 hover:underline transition-colors text-left">
+                        {{ row.category_name }}
+                      </button>
+                    </td>
+                    <td class="px-4 py-3 text-right font-bold text-blue-500">{{ row.sku_count }}</td>
+                    <td class="px-4 py-3 text-right font-bold text-emerald-500">{{ row.total_stock }}</td>
+                    <td class="px-4 py-3" style="color: var(--color-text-muted)">{{ row.remark || '-' }}</td>
+                  </template>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="px-6 py-4 border-t flex justify-between items-center" style="border-color: var(--color-border); background: var(--color-bg-body)">
+          <p class="text-[12px]" style="color: var(--color-text-muted)">
+            <span v-if="modalSearchText">พบ {{ filteredModalData.length }} จาก </span>
+            แสดงทั้งหมด {{ modalData.length }} รายการ
+          </p>
+          <button @click="isDetailModalOpen = false" class="px-4 py-1.5 rounded-lg text-[13px] font-medium text-white transition-all active:scale-95" style="background: var(--color-primary)">
+            ปิดหน้าต่าง
+          </button>
+        </div>
+      </div>
+    </div>
   </AppLayout>
 </template>

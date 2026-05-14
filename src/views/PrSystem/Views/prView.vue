@@ -390,6 +390,7 @@ function getDisplayBadgeInfo(row) {
             <tr style="background: var(--color-bg-body); border-bottom: 1px solid var(--color-border)">
               <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">เลขที่เอกสาร</th>
               <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">วันที่</th>
+              <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">รายละเอียดสินค้า</th>
               <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">อายุเอกสาร</th>
               <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">ผู้ขาย/หน่วยงาน</th>
               <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">Staff</th>
@@ -402,7 +403,7 @@ function getDisplayBadgeInfo(row) {
           </thead>
           <tbody>
             <tr v-if="trcloudLoading">
-              <td colspan="10" class="px-4 py-12 text-center">
+              <td colspan="11" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
                   <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
@@ -410,11 +411,14 @@ function getDisplayBadgeInfo(row) {
               </td>
             </tr>
             <tr v-else-if="!filteredTrcloudRows.length">
-              <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PR จาก TRCLOUD</td>
+              <td colspan="11" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PR จาก TRCLOUD</td>
             </tr>
             <tr v-for="r in filteredTrcloudRows" :key="r.pr_id || r.id" class="hover:bg-gray-50/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-medium font-mono" style="color: #00d4ff; border-right: 1px solid var(--color-border)">{{ r.document_number || r.pr_id || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
+              <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border); white-space: normal; word-break: break-word;">
+                {{ r.description || r.title || r.subject || r.details || r.remark || '-' }}
+              </td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ getStaffName(r) }}</td>

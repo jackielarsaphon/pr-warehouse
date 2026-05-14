@@ -7,18 +7,21 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   const poRows = ref([])
   const apRows = ref([])
   const pvRows = ref([])
+  const expenseRows = ref([])
   const activeRequests = new Map()
   const typeLastFetchedAt = ref({
     pr: null,
     po: null,
     ap: null,
-    pv: null
+    pv: null,
+    expense: null
   })
   const typeLastRange = ref({
     pr: '',
     po: '',
     ap: '',
-    pv: ''
+    pv: '',
+    expense: ''
   })
   
   const loading = ref(false)
@@ -51,7 +54,8 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     if (type === 'pr') return prRows.value
     if (type === 'po') return poRows.value
     if (type === 'ap') return apRows.value
-    return pvRows.value
+    if (type === 'pv') return pvRows.value
+    return expenseRows.value
   }
 
   const getCurrentRangeKey = () => `${dateFrom.value || ''}_${dateTo.value || ''}`
@@ -107,6 +111,9 @@ export const useTrcloudStore = defineStore('trcloud', () => {
       } else if (type === 'ap') {
         endpoint = '/application/expense/api/engine-expense/expense_search_keyword.php'
         docType = 'ap'
+      } else if (type === 'expense') {
+        endpoint = '/application/expense/api/engine-expense/expense_search_keyword.php'
+        docType = ''
       }
 
       const url = `/trcloud-api${endpoint}`
@@ -156,6 +163,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'X-Requested-With': 'XMLHttpRequest',
+            ...trcloudProxyExtraHeaders(),
           },
           body: body,
         })
@@ -234,6 +242,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           if (type === 'pr') prRows.value = [...results]
           else if (type === 'po') poRows.value = [...results]
           else if (type === 'pv') pvRows.value = [...results]
+          else if (type === 'expense') expenseRows.value = [...results]
           else if (type === 'ap') {
             // AP needs normalization before showing
             const apList = results.map(x => {
@@ -323,7 +332,8 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         fetchTrcloudData('pr', { force, skipApStatusSync }),
         fetchTrcloudData('po', { force, skipApStatusSync }),
         fetchTrcloudData('ap', { force, skipApStatusSync }),
-        fetchTrcloudData('pv', { force, skipApStatusSync })
+        fetchTrcloudData('pv', { force, skipApStatusSync }),
+        fetchTrcloudData('expense', { force, skipApStatusSync })
       ])
       lastFetched.value = new Date()
     } finally {
@@ -332,7 +342,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   }
 
   return {
-    prRows, poRows, apRows, pvRows,
+    prRows, poRows, apRows, pvRows, expenseRows,
     loading, lastFetched, isLoaded,
     dateFrom, dateTo,
     fetchAll, fetchTrcloudData
