@@ -412,7 +412,7 @@ function toggleExpanded(group) {
                       </thead>
                       <tbody>
                         <template v-for="item in group.items" :key="item.id">
-                        <tr style="border-bottom: 1px solid var(--color-border)">
+                        <tr class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
                           <td class="px-4 py-2" style="color: var(--color-text-primary); white-space: pre-line; border-right: 1px solid var(--color-border)">
                             {{ item.details || '-' }}
                           </td>

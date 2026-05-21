@@ -407,7 +407,7 @@ onMounted(() => {
             <tr
               v-for="row in relationRows"
               :key="row.prNo"
-              class="hover:bg-gray-50/50 transition-colors"
+              class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
             >
               <td

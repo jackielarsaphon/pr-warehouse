@@ -338,7 +338,7 @@ onMounted(() => {
             <tr v-else-if="!filteredRows.length">
               <td colspan="12" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ PO รายการสินค้า</td>
             </tr>
-            <tr v-for="row in filteredRows" :key="`${row.doc_number || ''}_${row.item_name || ''}_${row.price || ''}`" class="hover:bg-gray-50/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="row in filteredRows" :key="`${row.doc_number || ''}_${row.item_name || ''}_${row.price || ''}`" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-mono break-all" style="color: var(--color-text-primary)">{{ row.doc_number || '-' }}</td>
               <td class="px-4 py-3 font-mono break-all" style="color: var(--color-text-primary)">{{ row.expense || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.issue_date || '-' }}</td>

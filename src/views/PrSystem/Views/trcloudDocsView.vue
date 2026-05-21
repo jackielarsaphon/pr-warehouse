@@ -161,7 +161,7 @@ onMounted(() => {
             <tr v-if="filteredRows.length === 0">
               <td colspan="7" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการเอกสาร</td>
             </tr>
-            <tr v-for="row in filteredRows" :key="row.id" class="hover:bg-gray-50/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="row in filteredRows" :key="row.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-mono break-all" style="color: var(--color-text-primary)">{{ row.docNumber }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.date }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.type }}</td>

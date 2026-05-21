@@ -126,13 +126,19 @@ function toggleTracked(row, checked) {
   if (!currentId) return
   
   if (checked) {
-    // เพิ่มเข้าลำดับแรกสุด (Newest First)
-    trackedRowIds.value = [currentId, ...trackedRowIds.value.filter(id => id !== currentId)]
+    // Find all rows with the same doc_number
+    const sameDocRows = trcloudStore.apItemRows.filter(r => r.doc_number === row.doc_number)
+    const sameDocIds = sameDocRows.map(r => getRowIdentity(r)).filter(Boolean)
+    
+    // Add all same doc IDs to trackedRowIds, placing the current one first
+    const newTracked = [...sameDocIds.filter(id => id !== currentId), currentId]
+    const existingTracked = trackedRowIds.value.filter(id => !newTracked.includes(id))
+    trackedRowIds.value = [...newTracked.reverse(), ...existingTracked]
     
     persistTrackedRowIds()
-    setTrackedCloud(currentId, true)
+    setTrackedCloud(sameDocIds, true)
   } else {
-    // กรณีติ๊กออก: ให้ยกเลิกเฉพาะรายการที่กดเท่านั้น
+    // Uncheck: only remove the current item
     trackedRowIds.value = trackedRowIds.value.filter((x) => x !== currentId)
     
     persistTrackedRowIds()
@@ -324,7 +330,7 @@ onMounted(() => {
             <tr v-else-if="!filteredRows.length">
               <td colspan="12" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ AP รายการสินค้า</td>
             </tr>
-            <tr v-for="(row, index) in filteredRows" :key="`${row.doc_number || ''}_${row.item_name || ''}_${row.price || ''}_${index}`" class="hover:bg-gray-50/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="(row, index) in filteredRows" :key="getRowIdentity(row)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 text-center relative" style="border-right: 1px solid var(--color-border)">
                 <button 
                   @click="toggleMenu(`${row.doc_number}_${index}`)"

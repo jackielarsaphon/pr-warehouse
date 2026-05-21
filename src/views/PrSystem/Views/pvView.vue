@@ -208,7 +208,7 @@ function getDocMonth(row) {
             <tr v-else-if="!filteredTrcloudRows.length">
               <td colspan="9" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PV จาก TRCLOUD</td>
             </tr>
-            <tr v-for="r in filteredTrcloudRows" :key="r.payment_id || r.id" class="hover:bg-gray-50/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="r in filteredTrcloudRows" :key="r.payment_id || r.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-medium font-mono" style="color: #10b981; border-right: 1px solid var(--color-border)">{{ (r.company_format || '') + (r.document_number || r.payment_id || '-') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>

@@ -281,16 +281,23 @@ function toggleTracked(row, checked) {
   if (!currentId) return
 
   if (checked) {
-    // Select all rows with the same document number
-    const relatedRows = trcloudStore.apRows.filter(r => getRowIdentity(r) === currentId)
-    const newIds = relatedRows.map(getRowIdentity).filter(Boolean)
+    // Find all rows with the same document number (invoice_number)
+    const sameDocRows = trcloudStore.apRows.filter(r => 
+      (r.invoice_number || r.document_number || '') === (row.invoice_number || row.document_number || '')
+    )
+    const sameDocIds = sameDocRows.map(getRowIdentity).filter(Boolean)
     
-    trackedRowIds.value = [...new Set([currentId, ...trackedRowIds.value, ...newIds])]
+    // Add all same doc IDs to trackedRowIds, placing the current one first
+    const newTracked = [...sameDocIds.filter(id => id !== currentId), currentId]
+    const existingTracked = trackedRowIds.value.filter(id => !newTracked.includes(id))
+    trackedRowIds.value = [...newTracked.reverse(), ...existingTracked]
+    
     persistTrackedRowIds()
-    setTrackedCloud(newIds, true)
+    setTrackedCloud(sameDocIds, true)
   } else {
-    // Deselect ONLY this specific row
+    // Uncheck: only remove the current item
     trackedRowIds.value = trackedRowIds.value.filter((x) => x !== currentId)
+    
     persistTrackedRowIds()
     setTrackedCloud(currentId, false)
   }
@@ -436,7 +443,7 @@ function getDisplayBadgeInfo(row) {
             <tr v-else-if="!filteredTrcloudRows.length">
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล AP จาก TRCLOUD</td>
             </tr>
-            <tr v-for="r in filteredTrcloudRows" :key="r.expense_id || r.id" class="hover:bg-gray-50/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="r in filteredTrcloudRows" :key="getRowIdentity(r)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-medium font-mono break-all" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ r.invoice_number || r.document_number || r.expense_id || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>

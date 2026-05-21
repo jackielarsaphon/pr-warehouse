@@ -539,7 +539,7 @@ function getDisplayBadgeInfo(row) {
             <tr
               v-for="r in filteredTrcloudRows"
               :key="getRowIdentity(r)"
-              class="hover:bg-gray-50/50 transition-colors"
+              class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
             >
               <td class="px-4 py-3 font-medium font-mono" style="color: #00d4ff; border-right: 1px solid var(--color-border)">{{ r.document_number || r.pr_id || '-' }}</td>
