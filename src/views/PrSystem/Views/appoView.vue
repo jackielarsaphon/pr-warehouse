@@ -29,6 +29,7 @@ const apInfo = ref(null)
 const expandedRowIds = ref([])
 const showAddedTable = ref(false)
 const addedTableRef = ref(null)
+const autofillQueue = ref([]) // คิวรายการที่รอ autofill
 
 async function fetchUrgentOptions() {
   try {
@@ -430,7 +431,7 @@ onMounted(() => {
 
   // ตรวจสอบว่ามีการส่งข้อมูลมาจากหน้าอื่นหรือไม่
   if (trcloudStore.pendingAutofill) {
-    selectApOption(trcloudStore.pendingAutofill)
+    handleAutofill(trcloudStore.pendingAutofill)
     trcloudStore.pendingAutofill = null
   }
 })
@@ -438,10 +439,24 @@ onMounted(() => {
 // เพิ่ม watch สำหรับกรณีที่อยู่ในหน้านี้อยู่แล้วและมีการส่งข้อมูลมาใหม่
 watch(() => trcloudStore.pendingAutofill, (val) => {
   if (val) {
-    selectApOption(val)
+    handleAutofill(val)
     trcloudStore.pendingAutofill = null
   }
 })
+
+async function handleAutofill(val) {
+  const list = Array.isArray(val) ? val : [val]
+  if (list.length === 0) return
+
+  // เก็บรายการทั้งหมดเข้าคิว
+  autofillQueue.value = [...list]
+  
+  // ดึงรายการแรกมาแสดงในฟอร์ม
+  const firstItem = autofillQueue.value.shift()
+  if (firstItem) {
+    await selectApOption(firstItem)
+  }
+}
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === '') return '-'
@@ -477,7 +492,17 @@ async function addRow() {
   }
 
   rows.value = [{ _tmp_id: crypto.randomUUID(), ...payload }, ...(rows.value || [])]
-  resetForm(false)
+  
+  // ตรวจสอบคิว autofill
+  if (autofillQueue.value.length > 0) {
+    const nextItem = autofillQueue.value.shift()
+    if (nextItem) {
+      await selectApOption(nextItem)
+    }
+  } else {
+    resetForm(false)
+  }
+  
   showAddedTable.value = true
   await nextTick()
   scrollToAddedTable()
@@ -659,19 +684,32 @@ watch(
         >
           <i class="fa-solid fa-arrow-left text-gray-500"></i>
         </button>
-        <div>
-          <h1 class="text-[20px] font-semibold flex items-center gap-2" style="color: var(--color-text-primary)">
-            ฟอมร์ส่งรายการ
-            <span
-              v-if="editMode"
-              class="px-2 py-0.5 rounded-full text-[11px] font-medium border"
-              style="border-color: rgba(249, 115, 22, 0.35); color: #f97316"
-            >
-              แก้ไขข้อมูล
-            </span>
-            <span v-if="editLoading" class="text-[12px] font-normal" style="color: var(--color-text-muted)">กำลังโหลด...</span>
-          </h1>
-          <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">บันทึกข้อมูลจากตาราง ap_requests</p>
+        <div class="md:col-span-3 flex items-center justify-between">
+          <div>
+            <h1 class="text-[20px] font-semibold flex items-center gap-2" style="color: var(--color-text-primary)">
+              ฟอมร์ส่งรายการ
+              <span
+                v-if="editMode"
+                class="px-2 py-0.5 rounded-full text-[11px] font-medium border"
+                style="border-color: rgba(249, 115, 22, 0.35); color: #f97316"
+              >
+                แก้ไขข้อมูล
+              </span>
+              <span v-if="editLoading" class="text-[12px] font-normal" style="color: var(--color-text-muted)">กำลังโหลด...</span>
+            </h1>
+            <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">บันทึกข้อมูลจากตาราง ap_requests</p>
+          </div>
+          
+          <!-- Queue Indicator -->
+          <div v-if="autofillQueue.length > 0" class="flex items-center gap-3 px-4 py-2 rounded-xl border bg-blue-50/50 border-blue-200 animate-pulse">
+            <div class="flex flex-col items-end">
+              <span class="text-[11px] font-medium text-blue-600 uppercase tracking-wider">กำลังรอดำเนินการ</span>
+              <span class="text-[13px] font-bold text-blue-700">เหลืออีก {{ autofillQueue.length }} รายการ</span>
+            </div>
+            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white">
+              <i class="fa-solid fa-layer-group text-[14px]"></i>
+            </div>
+          </div>
         </div>
       </div>
     </div>

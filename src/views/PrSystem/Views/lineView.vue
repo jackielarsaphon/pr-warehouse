@@ -9,7 +9,7 @@ const loading = ref(true)
 const rows = ref([])
 const searchText = ref('')
 const viewMode = ref('pay') // pay | slip
-const activeRowId = ref(null)
+const selectedRowIds = ref([]) // Array of selected row IDs
 const editableText = ref('')
 const messageDirty = ref(false)
 const logging = ref(false)
@@ -108,9 +108,7 @@ async function fetchRows() {
     const { data, error } = await q
     if (error) throw error
     rows.value = data || []
-    // if (activeRowId.value == null && rows.value.length) {
-    //   activeRowId.value = rows.value[0]?.id ?? null
-    // }
+    
     await fetchStatuses()
   } catch (err) {
     alert('โหลดข้อมูลไม่สำเร็จ: ' + String(err?.message || err || 'เกิดข้อผิดพลาด'))
@@ -154,33 +152,49 @@ const filteredRows = computed(() => {
 })
 
 // ---- active row ----
-const activeRow = computed(() => (rows.value || []).find((r) => r.id === activeRowId.value) ?? null)
+const selectedRows = computed(() => (rows.value || []).filter((r) => selectedRowIds.value.includes(r.id)))
 
-// slip mode: แสดงเฉพาะ row ที่เลือกแถวเดียว
-const activeSlipRows = computed(() => {
-  const r = activeRow.value
-  if (!r) return []
-  return [r]
-})
+// slip mode: แสดงเฉพาะ row ที่เลือก
+const activeSlipRows = computed(() => selectedRows.value)
 
 const slipHeaderText = computed(() => {
-  const r = activeRow.value
-  if (!r) return ''
-  const ap = String(r.ap_number || '').trim() || '-'
-  const status = String(r.ap_status || '').trim() || '-'
-  return `AP: ${ap} | ${status}`
+  if (selectedRowIds.value.length === 0) return ''
+  if (selectedRowIds.value.length === 1) {
+    const r = selectedRows.value[0]
+    const ap = String(r.ap_number || '').trim() || '-'
+    const status = String(r.ap_status || '').trim() || '-'
+    return `AP: ${ap} | ${status}`
+  }
+  return `เลือก ${selectedRowIds.value.length} รายการ`
 })
 
+function isSelected(id) {
+  return selectedRowIds.value.includes(id)
+}
+
 function selectRow(id) {
-  if (activeRowId.value === id) {
-    // ติ๊กซ้ำ = ยกเลิก
-    activeRowId.value = null
-    messageDirty.value = false
-    editableText.value = ''
+  const r = (rows.value || []).find(x => x.id === id)
+  if (!r) return
+
+  const apNum = r.ap_number
+  // ค้นหาแถวทั้งหมดที่มี ap_number เดียวกัน
+  const sameApRows = (rows.value || []).filter(x => x.ap_number === apNum)
+  const sameApIds = sameApRows.map(x => x.id)
+
+  const isAlreadySelected = selectedRowIds.value.includes(id)
+  
+  if (isAlreadySelected) {
+    // เอาออกทั้งกลุ่ม
+    selectedRowIds.value = selectedRowIds.value.filter(x => !sameApIds.includes(x))
   } else {
-    activeRowId.value = id
-    messageDirty.value = false
+    // เพิ่มทั้งกลุ่ม
+    const newIds = [...selectedRowIds.value]
+    for (const sid of sameApIds) {
+      if (!newIds.includes(sid)) newIds.push(sid)
+    }
+    selectedRowIds.value = newIds
   }
+  messageDirty.value = false
 }
 
 // status ของ mode ปัจจุบัน
@@ -215,49 +229,105 @@ function currencySumText(sumByCurrency) {
   return entries.map(([cur, amt]) => `${cur || '-'}: ${formatNumber(amt)}`).join('  ')
 }
 
-function buildPendingPaymentMessage(r) {
-  if (!r) return ''
+function buildMultiPaymentMessage(selectedList) {
+  if (!selectedList || !selectedList.length) return ''
+  
   const now = new Date()
   const headerDate = formatThaiDateBuddhist(now)
   const blocks = []
   blocks.push(`📋 สรุปรายการขอชำระเงิน [จัดซื้อ สปป.ลาว]`)
   blocks.push(`วันที่: ${headerDate}`)
   blocks.push(`————————`)
-  blocks.push(``)
-  blocks.push(paymentSectionTitle(r.option_name))
-  blocks.push(``)
 
-  const ap = String(r.ap_number || '').trim() || '-'
-  const po = String(r.po_id || '').trim() || '-'
-  const supplier = String(r.supplier_name || '').trim() || '-'
-  const item = String(r.item_ref || '').trim() || '-'
-  const qty = r.qty_order === null || r.qty_order === undefined || r.qty_order === '' ? '-' : String(r.qty_order)
-  const total = moneyText(r.total_price, r.currency_name)
-  const desiredIso = r.desired_date ? String(r.desired_date).slice(0, 10) : '-'
-  const remark = String(r.remark || '').trim() || '-'
+  // Group by urgency category
+  const categories = {
+    urgent_max: [],
+    urgent: [],
+    normal: []
+  }
+  
+  for (const r of selectedList) {
+    categories[urgencyBucket(r.option_name)].push(r)
+  }
 
-  const ordered = Number(r.qty_order || 0)
-  const received = Number(r.qty_received || 0)
-  const pendingItemCount = Number.isFinite(ordered) && Number.isFinite(received) && ordered > received ? 1 : 0
-  const sumByCurrency = {}
-  const cur = String(r.currency_name || '').trim() || '-'
-  const amt = Number(r.total_price || 0)
-  if (Number.isFinite(amt)) sumByCurrency[cur] = (sumByCurrency[cur] || 0) + amt
+  const overallSumByCurrency = {}
+  let overallPendingItemCount = 0
 
-  blocks.push(`1. ${ap} | ${po}`)
-  blocks.push(`  • ${item}  |  จำนวน: ${qty}  |  ยอด: ${total}`)
-  blocks.push(``)
-  blocks.push(`🏪 ร้านค้า: ${supplier}`)
-  blocks.push(`📅 ต้องการของ: ${desiredIso}`)
-  blocks.push(`✍️ เหตุผล: ${remark}`)
-  blocks.push(`💰 ยอดรวม: ${currencySumText(sumByCurrency)}  📦 ของค้างรับ: ${formatNumber(pendingItemCount)} รายการ`)
-  blocks.push(``)
-  blocks.push(`————————`)
+  for (const [catKey, catRows] of Object.entries(categories)) {
+    if (!catRows.length) continue
+    
+    blocks.push(paymentSectionTitle(catRows[0].option_name))
+    blocks.push(``)
+
+    // Group by Supplier within category
+    const supplierGroups = {}
+    for (const r of catRows) {
+      const supplier = r.supplier_name || 'ไม่ระบุผู้ขาย'
+      if (!supplierGroups[supplier]) supplierGroups[supplier] = []
+      supplierGroups[supplier].push(r)
+    }
+
+    for (const [supplierName, groupRows] of Object.entries(supplierGroups)) {
+      const groupSumByCurrency = {}
+      let groupPendingItemCount = 0
+      
+      // Group by AP number within supplier
+      const apGroups = {}
+      for (const r of groupRows) {
+        const ap = r.ap_number || '-'
+        if (!apGroups[ap]) apGroups[ap] = []
+        apGroups[ap].push(r)
+      }
+
+      let apIndex = 1
+      for (const [ap, apRows] of Object.entries(apGroups)) {
+        const first = apRows[0]
+        const po = String(first.po_id || '').trim() || '-'
+        blocks.push(`${apIndex}. ${ap} | ${po}`)
+        
+        for (const r of apRows) {
+          const item = String(r.item_ref || '').trim() || '-'
+          const qty = r.qty_order === null || r.qty_order === undefined || r.qty_order === '' ? '-' : String(r.qty_order)
+          const total = moneyText(r.total_price, r.currency_name)
+          
+          blocks.push(`  • ${item}  |  จำนวน: ${qty}  |  ยอด: ${total}`)
+
+          const cur = String(r.currency_name || '').trim() || '-'
+          const amt = Number(r.total_price || 0)
+          if (Number.isFinite(amt)) {
+            groupSumByCurrency[cur] = (groupSumByCurrency[cur] || 0) + amt
+            overallSumByCurrency[cur] = (overallSumByCurrency[cur] || 0) + amt
+          }
+
+          const ordered = Number(r.qty_order || 0)
+          const received = Number(r.qty_received || 0)
+          if (Number.isFinite(ordered) && Number.isFinite(received) && ordered > received) {
+            groupPendingItemCount++
+            overallPendingItemCount++
+          }
+        }
+        apIndex++
+      }
+
+      const firstRow = groupRows[0]
+      const desiredIso = firstRow.desired_date ? String(firstRow.desired_date).slice(0, 10) : '-'
+      const remark = String(firstRow.remark || '').trim() || '-'
+
+      blocks.push(`🏪 ร้านค้า: ${supplierName}`)
+      blocks.push(`📅 ต้องการของ: ${desiredIso}`)
+      blocks.push(`✍️ เหตุผล: ${remark}`)
+      blocks.push(`💰 ยอดรวม: ${currencySumText(groupSumByCurrency)}  📦 ของค้างรับ: ${formatNumber(groupPendingItemCount)} รายการ`)
+      blocks.push(``)
+    }
+    blocks.push(`————————`)
+  }
+
   blocks.push(`📊 สรุปรวมยอดรอชำระ`)
-  blocks.push(`💰 ${currencySumText(sumByCurrency)}`)
-  blocks.push(`📦 ของค้างรับ PO เดิม: ${formatNumber(pendingItemCount)} รายการ — โปรดตามซัพพลายเออร์`)
+  blocks.push(`💰 ${currencySumText(overallSumByCurrency)}`)
+  blocks.push(`📦 ของค้างรับ PO เดิม: ${formatNumber(overallPendingItemCount)} รายการ — โปรดตามซัพพลายเออร์`)
   blocks.push(`————————`)
   blocks.push(`กรุณาแจ้งยืนยัน หรือโอนพร้อมระบุเลข AP ในหมายเหตุ`)
+  
   return blocks.join('\n')
 }
 
@@ -347,18 +417,19 @@ function buildSlipConfirmMessageFromRows(list) {
 }
 
 function buildMessageForRow(r) {
-  return viewMode.value === 'slip'
-    ? buildSlipConfirmMessageFromRows(activeSlipRows.value)
-    : buildPendingPaymentMessage(r)
+  if (viewMode.value === 'slip') {
+    return buildSlipConfirmMessageFromRows(selectedRows.value)
+  }
+  return buildMultiPaymentMessage(selectedRows.value)
 }
 
-const generatedMessageText = computed(() => buildMessageForRow(activeRow.value))
+const generatedMessageText = computed(() => buildMessageForRow(null))
 
 watch(
   () => generatedMessageText.value,
   (text) => {
     if (messageDirty.value) return
-    if (activeRowId.value == null) {
+    if (selectedRowIds.value.length === 0) {
       editableText.value = ''
       return
     }
@@ -498,10 +569,8 @@ async function copyMessage() {
   if (!text) return
   try {
     await navigator.clipboard.writeText(text)
-    if (viewMode.value === 'slip') {
-      await logActionForRows((activeSlipRows.value || []).map((r) => r.id), 'line_copy_ap_request')
-    } else if (activeRowId.value != null) {
-      await logActionForRow(activeRowId.value, 'line_copy_ap_request')
+    if (selectedRowIds.value.length > 0) {
+      await logActionForRows(selectedRowIds.value, 'line_copy_ap_request')
     }
     alert('คัดลอกข้อความแล้ว')
   } catch (err) {
@@ -544,7 +613,7 @@ async function markReadRow(r) {
             class="px-3 py-1.5 rounded-full text-[12px] font-medium border transition-all"
             :class="viewMode === 'pay' ? 'bg-blue-600 text-white' : 'hover:bg-gray-50'"
             :style="viewMode === 'pay' ? { borderColor: '#2563eb' } : { borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }"
-            @click="viewMode = 'pay'; activeRowId = null; messageDirty = false; editableText = ''; fetchRows()"
+            @click="viewMode = 'pay'; selectedRowIds = []; messageDirty = false; editableText = ''; fetchRows()"
           >
             แจ้งขอชำระเงิน ({{ countsLoading ? '-' : statusCounts.pay }})
           </button>
@@ -553,7 +622,7 @@ async function markReadRow(r) {
             class="px-3 py-1.5 rounded-full text-[12px] font-medium border transition-all"
             :class="viewMode === 'slip' ? 'bg-blue-600 text-white' : 'hover:bg-gray-50'"
             :style="viewMode === 'slip' ? { borderColor: '#2563eb' } : { borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }"
-            @click="viewMode = 'slip'; activeRowId = null; messageDirty = false; editableText = ''; fetchRows()"
+            @click="viewMode = 'slip'; selectedRowIds = []; messageDirty = false; editableText = ''; fetchRows()"
           >
             ยืนยันรับสลิป ({{ countsLoading ? '-' : (statusCounts.paid + statusCounts.pay) }})
           </button>
@@ -600,7 +669,7 @@ async function markReadRow(r) {
             style="background: var(--color-bg-card); border-color: var(--color-border)"
           >
             <div class="flex items-start gap-3">
-              <input type="checkbox" class="w-4 h-4 mt-1" :checked="activeRowId === r.id" @change="selectRow(r.id)" />
+              <input type="checkbox" class="w-4 h-4 mt-1" :checked="isSelected(r.id)" @change="selectRow(r.id)" />
 
               <div class="flex-1 min-w-0">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
@@ -694,8 +763,7 @@ async function markReadRow(r) {
           <div class="flex items-center justify-between gap-3 mb-2">
             <div class="text-[13px] font-semibold" style="color: var(--color-text-primary)">
               ข้อความ
-              <span v-if="viewMode === 'slip'" class="ml-2 text-[12px] font-normal" style="color: var(--color-text-muted)">{{ slipHeaderText }}</span>
-              <span v-else-if="activeRow" class="ml-2 text-[12px] font-normal" style="color: var(--color-text-muted)">AP: {{ activeRow.ap_number }} ({{ activeRow.ap_status || '-' }})</span>
+              <span class="ml-2 text-[12px] font-normal" style="color: var(--color-text-muted)">{{ slipHeaderText }}</span>
             </div>
             <div class="flex items-center gap-2">
               <button
