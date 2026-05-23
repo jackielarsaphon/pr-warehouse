@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useUiStore } from '@/stores/ui'
+import Swal from 'sweetalert2'
 
 const ui = useUiStore()
 const emit = defineEmits(['editRow'])
@@ -11,6 +12,8 @@ const props = defineProps({
 
 const loading = ref(true)
 const rows = ref([])
+const selectionMode = ref(false)
+const selectedIds = ref([])
 
 const searchText = ref('')
 const selectedUrgent = ref('all')
@@ -84,8 +87,8 @@ function formatNumber(value) {
 
 function moneyText(amount, currency) {
   const a = formatNumber(amount)
-  const c = String(currency || '').trim()
-  return c ? `${a} ${c}` : a
+  const c = String(currency || '').trim() || 'LAK'
+  return `${a} ${c.toUpperCase()}`
 }
 
 function normalizeText(value) {
@@ -211,6 +214,97 @@ function onEditRow(r) {
   emit('editRow', r)
 }
 
+async function removeRow(row) {
+  const result = await Swal.fire({
+    title: 'คุณต้องการลบข้อมูล?',
+    text: `ต้องการลบรายการ AP: ${row.ap_number || '-'} ใช่หรือไม่?`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#ef4444',
+    cancelButtonColor: '#6b7280',
+    confirmButtonText: 'ใช่, ลบเลย',
+    cancelButtonText: 'ยกเลิก',
+    reverseButtons: true,
+  })
+
+  if (!result.isConfirmed) return
+
+  try {
+    const { error } = await supabase.from('ap_requests').delete().eq('id', row.id)
+    if (error) throw error
+
+    Swal.fire({
+      title: 'ลบสำเร็จ!',
+      text: 'ข้อมูลถูกลบออกจากระบบแล้ว',
+      icon: 'success',
+      timer: 1500,
+      showConfirmButton: false,
+    })
+
+    await fetchRows()
+  } catch (err) {
+    Swal.fire('เกิดข้อผิดพลาด!', getErrorText(err), 'error')
+  }
+}
+
+async function removeSelectedRows() {
+  if (selectedIds.value.length === 0) return
+
+  const result = await Swal.fire({
+    title: 'ลบหลายรายการ?',
+    text: `คุณต้องการลบข้อมูลที่เลือกทั้งหมด ${selectedIds.value.length} รายการใช่หรือไม่?`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#ef4444',
+    cancelButtonColor: '#6b7280',
+    confirmButtonText: 'ใช่, ลบทั้งหมด',
+    cancelButtonText: 'ยกเลิก',
+    reverseButtons: true,
+  })
+
+  if (!result.isConfirmed) return
+
+  loading.value = true
+  try {
+    const { error } = await supabase.from('ap_requests').delete().in('id', selectedIds.value)
+    if (error) throw error
+
+    selectedIds.value = []
+    selectionMode.value = false
+
+    Swal.fire({
+      title: 'ลบสำเร็จ!',
+      text: 'ข้อมูลที่เลือกถูกลบออกแล้ว',
+      icon: 'success',
+      timer: 1500,
+      showConfirmButton: false,
+    })
+
+    await fetchRows()
+  } catch (err) {
+    Swal.fire('เกิดข้อผิดพลาด!', getErrorText(err), 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+function toggleSelectAll() {
+  if (selectedIds.value.length === pagedRows.value.length) {
+    selectedIds.value = []
+  } else {
+    selectedIds.value = pagedRows.value.map((r) => r.id)
+  }
+}
+
+function toggleSelection(id) {
+  const idx = selectedIds.value.indexOf(id)
+  if (idx > -1) {
+    selectedIds.value.splice(idx, 1)
+  } else {
+    selectedIds.value.push(id)
+  }
+}
+
 function applyPoDateFilter() {
   poDateFromApplied.value = poDateFromInput.value || ''
   poDateToApplied.value = poDateToInput.value || ''
@@ -262,7 +356,7 @@ const filteredUrgentCounts = computed(() => countByUrgent(filteredRows.value))
 const currencyTotals = computed(() => {
   const map = new Map()
   for (const r of filteredRows.value || []) {
-    const c = normalizeText(r?.currency_name) || '-'
+    const c = (normalizeText(r?.currency_name) || 'LAK').toUpperCase()
     const v = Number(r?.total_price ?? 0)
     if (!Number.isFinite(v)) continue
     map.set(c, (map.get(c) || 0) + v)
@@ -276,9 +370,43 @@ const currencyTotals = computed(() => {
 <template>
   <div>
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-      <div>
-        <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ตารางติดตาม</h1>
-        <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">ข้อมูลจากตาราง ap_requests</p>
+      <div class="flex items-center gap-3">
+        <div>
+          <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ตารางติดตาม</h1>
+          <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">ข้อมูลจากตาราง ap_requests</p>
+        </div>
+        <div class="relative group">
+          <button
+            type="button"
+            class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
+            @click="selectionMode = !selectionMode; selectedIds = []"
+          >
+            <i class="fa-solid fa-ellipsis-vertical text-[16px]" style="color: var(--color-text-muted)"></i>
+          </button>
+          <div class="absolute left-0 mt-1 hidden group-hover:block z-20">
+            <div class="bg-white border rounded-lg shadow-lg py-1 min-w-[150px]">
+              <button
+                type="button"
+                class="w-full px-4 py-2 text-left text-[13px] hover:bg-gray-50 flex items-center gap-2"
+                @click="selectionMode = !selectionMode; selectedIds = []"
+              >
+                <i :class="selectionMode ? 'fa-solid fa-xmark' : 'fa-solid fa-check-double'"></i>
+                {{ selectionMode ? 'ยกเลิกการเลือก' : 'เลือกหลายรายการ' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="selectionMode && selectedIds.length > 0" class="flex items-center gap-3">
+        <span class="text-[13px] font-medium" style="color: var(--color-text-primary)">เลือกแล้ว {{ selectedIds.length }} รายการ</span>
+        <button
+          type="button"
+          class="px-4 py-1.5 rounded-lg bg-red-600 text-white text-[13px] font-medium hover:bg-red-700 transition-colors shadow-sm flex items-center gap-2"
+          @click="removeSelectedRows"
+        >
+          <i class="fa-solid fa-trash-can"></i>
+          ลบที่เลือก
+        </button>
       </div>
     </div>
 
@@ -454,6 +582,14 @@ const currencyTotals = computed(() => {
         <table class="w-full text-[13px] min-w-[1540px] border-collapse">
           <thead>
             <tr style="background: var(--color-bg-body); border-bottom: 1px solid var(--color-border)">
+              <th v-if="selectionMode" class="px-4 py-3 text-center">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  :checked="pagedRows.length > 0 && selectedIds.length === pagedRows.length"
+                  @change="toggleSelectAll"
+                />
+              </th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">หมายเลข</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">รายการ</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ผู้ขาย</th>
@@ -477,8 +613,17 @@ const currencyTotals = computed(() => {
               v-for="r in pagedRows"
               :key="r.id"
               class="border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors"
+              :class="{ 'bg-blue-50/50': selectedIds.includes(r.id) }"
               style="border-color: var(--color-border)"
             >
+              <td v-if="selectionMode" class="px-4 py-3 text-center align-top">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  :checked="selectedIds.includes(r.id)"
+                  @change="toggleSelection(r.id)"
+                />
+              </td>
               <td class="px-4 py-3 align-top whitespace-nowrap">
                 <div class="font-semibold" style="color: #2563eb">AP: {{ r.ap_number || '-' }}</div>
                 <div class="font-medium" style="color: var(--color-text-primary)">PO: {{ r.po_id || '-' }}</div>
@@ -548,23 +693,39 @@ const currencyTotals = computed(() => {
                   <i class="fa-solid fa-minus text-[12px]"></i>
                 </span>
               </td>
-              <td class="px-3 py-3 align-top text-center">
+              <td class="px-3 py-3 align-top text-center relative group">
                 <button
                   type="button"
-                  class="inline-flex items-center justify-center w-9 h-9 rounded-lg border transition-all hover:shadow-sm hover:-translate-y-[1px]"
-                  style="border-color: #fed7aa; color: #f97316; background: #fff7ed"
-                  title="แก้ไข"
-                  @click="onEditRow(r)"
+                  class="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 hover:shadow-sm"
+                  title="จัดการ"
                 >
-                  <i class="fa-solid fa-pen-to-square text-[13px]"></i>
+                  <i class="fa-solid fa-ellipsis text-[14px]"></i>
                 </button>
+                <div class="absolute right-full mr-1 top-3 hidden group-hover:block z-30">
+                  <div class="bg-white border rounded-lg shadow-xl py-1 min-w-[100px] overflow-hidden">
+                    <button
+                      @click="onEditRow(r)"
+                      class="w-full px-3 py-2 text-left text-[13px] hover:bg-orange-50 text-orange-600 flex items-center gap-2 transition-colors"
+                    >
+                      <i class="fa-solid fa-pen-to-square"></i>
+                      แก้ไข
+                    </button>
+                    <button
+                      @click="removeRow(r)"
+                      class="w-full px-3 py-2 text-left text-[13px] hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors border-t border-gray-50"
+                    >
+                      <i class="fa-solid fa-trash-can"></i>
+                      ลบ
+                    </button>
+                  </div>
+                </div>
               </td>
             </tr>
             <tr v-if="loading">
-              <td colspan="16" class="px-4 py-10 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
+              <td :colspan="selectionMode ? 17 : 16" class="px-4 py-10 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
             </tr>
             <tr v-else-if="!loading && totalRows === 0">
-              <td colspan="16" class="px-4 py-10 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล</td>
+              <td :colspan="selectionMode ? 17 : 16" class="px-4 py-10 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล</td>
             </tr>
           </tbody>
         </table>

@@ -36,8 +36,8 @@ function formatNumber(value) {
 
 function moneyText(amount, currency) {
   const a = formatNumber(amount)
-  const c = String(currency || '').trim()
-  return c ? `${a} ${c}` : a
+  const c = String(currency || '').trim() || 'LAK'
+  return `${a} ${c.toUpperCase()}`
 }
 
 function urgentDot(optionName) {

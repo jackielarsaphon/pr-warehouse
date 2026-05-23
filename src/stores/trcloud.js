@@ -81,7 +81,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
       category: item?.category || invoice?.category || '',
       staff: invoice?.staff || invoice?.created_by || '',
       department: invoice?.department || invoice?.department_name || '',
-      currency: invoice?.currency || invoice?.currency_name || 'THB',
+      currency: String(invoice?.fx || invoice?.currency || invoice?.currency_name || 'LAK').toUpperCase(),
       ref_po: invoice?.po || invoice?.reference || invoice?.po_number || '',
       expense: invoice?.expense || invoice?.expense_no || invoice?.expense_number || invoice?.expense_doc || invoice?.expense_id || ''
     }
@@ -120,7 +120,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           category: invoice?.category || '',
           staff: invoice?.staff || invoice?.created_by || '',
           department: invoice?.department || invoice?.department_name || '',
-          currency: invoice?.currency || invoice?.currency_name || 'THB',
+          currency: String(invoice?.fx || invoice?.currency || invoice?.currency_name || 'LAK').toUpperCase(),
           ref_po: invoice?.po || invoice?.reference || invoice?.po_number || '',
           expense: invoice?.expense || invoice?.expense_no || invoice?.expense_number || invoice?.expense_doc || invoice?.expense_id || ''
         })
@@ -163,7 +163,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           category: po?.category || '',
           staff: po?.staff || po?.created_by || '',
           department: po?.department || po?.department_name || '',
-          currency: po?.currency || po?.currency_name || 'THB',
+          currency: String(po?.fx || po?.currency || po?.currency_name || 'LAK').toUpperCase(),
           ref_po: po?.po || po?.reference || po?.po_number || '',
           expense: po?.expense || po?.expense_no || po?.expense_number || po?.expense_doc || po?.expense_id || ''
         })
@@ -205,7 +205,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           category: pr?.category || '',
           staff: pr?.staff || pr?.created_by || '',
           department: pr?.department || pr?.department_name || '',
-          currency: pr?.currency || pr?.currency_name || 'THB',
+          currency: String(pr?.fx || pr?.currency || pr?.currency_name || 'LAK').toUpperCase(),
           ref_po: pr?.po || pr?.reference || pr?.po_number || '',
           expense: pr?.expense || pr?.expense_no || pr?.expense_number || pr?.expense_doc || pr?.expense_id || ''
         })
@@ -235,7 +235,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     date_transfer: '',
     option_name: '',
     total_price: null,
-    currency_name: '',
+    currency_name: 'LAK',
     ap_status: '',
     qty_received: null,
     desired_date: '',
@@ -320,10 +320,13 @@ export const useTrcloudStore = defineStore('trcloud', () => {
       let candidateEndpoints = []
       
       if (type === 'pv') {
-        endpoint = '/application/finance/api/engine-payment/payment_search_keyword.php'
+        endpoint = '/application/finance/api/engine-payment/payment_list.php'
         docType = ''
         useJson = true
-        candidateEndpoints = [endpoint]
+        candidateEndpoints = [
+          '/application/finance/api/engine-payment/payment_list.php',
+          '/application/finance/api/engine-payment/payment_search_keyword.php'
+        ]
       } else if (type === 'pr') {
         endpoint = '/application/expense/api/engine-pr/pr_search_keyword.php'
         candidateEndpoints = [endpoint]
@@ -365,7 +368,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         let currentUseJson = useJson
         if (selectedEndpoint.includes('_search_keyword.php')) {
           currentUseJson = false
-        } else if (selectedEndpoint.includes('invoice_list.php') || selectedEndpoint.includes('po_list.php')) {
+        } else if (selectedEndpoint.includes('invoice_list.php') || selectedEndpoint.includes('po_list.php') || selectedEndpoint.includes('payment_list.php')) {
           currentUseJson = true
         }
 
@@ -442,6 +445,18 @@ export const useTrcloudStore = defineStore('trcloud', () => {
               sales_to: '*',
               project: '*',
               department: '*',
+              keyword: '',
+              start: page
+            }
+          }
+
+          if (type === 'pv' && String(selectedEndpoint || '').toLowerCase().includes('payment_list.php')) {
+            finalPayload = {
+              company_id: companyId,
+              passkey: passkey,
+              from: dateFrom.value,
+              to: dateTo.value,
+              date_type: 'issue_date',
               keyword: '',
               start: page
             }

@@ -146,8 +146,8 @@ function formatCompactNumber(value) {
 
 function moneyText(amount, currency) {
   const a = formatNumber(amount)
-  const c = String(currency || '').trim()
-  return c ? `${a} ${c}` : a
+  const c = String(currency || '').trim() || 'LAK'
+  return `${a} ${c.toUpperCase()}`
 }
 
 function formatDateTime(value) {
@@ -467,7 +467,7 @@ const currencyChart = computed(() => {
   const sumPending = {}
   const sumPaid = {}
   for (const r of chartSourceRows.value || []) {
-    const cur = String(r.currency || 'THB').trim().toUpperCase()
+    const cur = String(r.currency || 'LAK').trim().toUpperCase()
     if (!cur) continue
     const amt = Number(r.grand_total || 0)
     if (!Number.isFinite(amt)) continue

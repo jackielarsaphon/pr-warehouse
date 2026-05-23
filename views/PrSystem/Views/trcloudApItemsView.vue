@@ -306,8 +306,14 @@ onMounted(() => {
               <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary)">{{ row.organization || '-' }}</td>
               <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary)">{{ row.item_name || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.quantity || '-' }}</td>
-              <td class="px-4 py-3 font-mono" style="color: var(--color-text-primary)">{{ Number(row.price || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</td>
-              <td class="px-4 py-3 font-mono" style="color: var(--color-text-primary)">{{ Number(row.item_total || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</td>
+                <td class="px-4 py-3 font-mono" style="color: var(--color-text-primary)">
+                  {{ Number(row.price || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                  <span class="text-[10px] ml-1 text-gray-400">{{ String(row.currency || 'LAK').toUpperCase() }}</span>
+                </td>
+              <td class="px-4 py-3 font-mono" style="color: var(--color-text-primary)">
+                {{ Number(row.item_total || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                <span class="text-[10px] ml-1 text-gray-400">{{ String(row.currency || 'LAK').toUpperCase() }}</span>
+              </td>
               <td class="px-4 py-3 text-center">
                 <input
                   type="checkbox"

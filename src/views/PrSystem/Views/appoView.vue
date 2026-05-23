@@ -267,7 +267,7 @@ async function fetchApAutofill(apIdentity) {
       else if (rawStatus === 'จ่ายครบ') form.value.ap_status = 'ชำระแล้ว'
       else form.value.ap_status = rawStatus
 
-      form.value.currency_name = trcloudItem.currency || 'THB' 
+      form.value.currency_name = String(trcloudItem.currency || 'LAK').toUpperCase() 
 
       apInfo.value = {
         po_id: form.value.po_id || '-',
@@ -479,7 +479,7 @@ async function handleAutofill(val) {
       date_transfer: form.value.date_transfer || null,
       option_name: (form.value.option_name || '').trim() || null,
       total_price: form.value.total_price === null || form.value.total_price === '' ? null : Number(form.value.total_price),
-      currency_name: (form.value.currency_name || '').trim() || null,
+      currency_name: (form.value.currency_name || '').trim() || 'LAK',
       ap_status: (form.value.ap_status || '').trim() || null,
       qty_received: form.value.qty_received === null || form.value.qty_received === '' ? null : Number(form.value.qty_received),
       desired_date: form.value.desired_date || null,
@@ -523,7 +523,7 @@ async function addRow() {
     date_transfer: form.value.date_transfer || null,
     option_name: (form.value.option_name || '').trim() || null,
     total_price: form.value.total_price === null || form.value.total_price === '' ? null : Number(form.value.total_price),
-    currency_name: (form.value.currency_name || '').trim() || null,
+    currency_name: (form.value.currency_name || '').trim() || 'LAK',
     ap_status: (form.value.ap_status || '').trim() || null,
     qty_received: form.value.qty_received === null || form.value.qty_received === '' ? null : Number(form.value.qty_received),
     desired_date: form.value.desired_date || null,
@@ -655,7 +655,7 @@ async function startEdit(id) {
     form.value.date_transfer = data.date_transfer ? isoDateFromAny(data.date_transfer) : ''
     form.value.option_name = data.option_name || ''
     form.value.total_price = data.total_price ?? null
-    form.value.currency_name = data.currency_name || ''
+    form.value.currency_name = data.currency_name || 'LAK'
     form.value.ap_status = data.ap_status || ''
     form.value.qty_received = data.qty_received ?? null
     form.value.desired_date = data.desired_date ? isoDateFromAny(data.desired_date) : ''
@@ -688,7 +688,7 @@ async function submitEdit() {
       date_transfer: form.value.date_transfer || null,
       option_name: (form.value.option_name || '').trim() || null,
       total_price: form.value.total_price === null || form.value.total_price === '' ? null : Number(form.value.total_price),
-      currency_name: (form.value.currency_name || '').trim() || null,
+      currency_name: (form.value.currency_name || '').trim() || 'LAK',
       ap_status: (form.value.ap_status || '').trim() || null,
       qty_received: form.value.qty_received === null || form.value.qty_received === '' ? null : Number(form.value.qty_received),
       desired_date: form.value.desired_date || null,
@@ -739,7 +739,7 @@ async function submitAll() {
       date_transfer: r.date_transfer ?? null,
       option_name: r.option_name ?? null,
       total_price: r.total_price ?? null,
-      currency_name: r.currency_name ?? null,
+      currency_name: r.currency_name || 'LAK',
       ap_status: r.ap_status ?? null,
       qty_received: r.qty_received ?? null,
       desired_date: r.desired_date ?? null,
@@ -1235,7 +1235,24 @@ watch(
                   </span>
                 </td>
                 <td class="px-3 py-2 whitespace-nowrap" style="border-right: 1px solid var(--color-border)">
-                  <div class="font-semibold" style="color: var(--color-text-primary)">{{ formatNumber(r.total_price) }} {{ r.currency_name || '' }}</div>
+                  <div class="font-semibold" style="color: var(--color-text-primary)">
+                    {{ formatNumber(r.total_price) }}
+                    <select
+                      :value="String(r.currency_name || 'LAK').toUpperCase()"
+                      @change="(e) => {
+                        const newCur = e.target.value;
+                        r.currency_name = newCur;
+                        // อัปเดตใน rows เพื่อให้ UI รีเฟรช
+                        rows = [...rows];
+                      }"
+                      class="ml-1 bg-transparent border-none p-0 font-bold text-blue-600 focus:ring-0 cursor-pointer hover:underline uppercase"
+                      title="คลิกเพื่อเปลี่ยนสกุลเงิน"
+                    >
+                      <option value="LAK">LAK</option>
+                      <option value="THB">THB</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
                   <div class="text-[11px]" style="color: var(--color-text-muted)">รับแล้ว: {{ formatNumber(r.amount_received) }} • คงเหลือ: {{ formatNumber(r.amount_balance) }}</div>
                 </td>
                 <td class="px-3 py-2 whitespace-nowrap" style="color: var(--color-text-primary)">

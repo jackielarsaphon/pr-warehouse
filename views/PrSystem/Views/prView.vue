@@ -448,7 +448,10 @@ function getDisplayBadgeInfo(row) {
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ getStaffName(r) }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.department || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.project || '-' }}</td>
-              <td class="px-4 py-3 text-right font-mono" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ Number(r.grand_total || 0).toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2}) }}</td>
+              <td class="px-4 py-3 text-right font-mono" style="color: #f59e0b; border-right: 1px solid var(--color-border)">
+                {{ Number(r.grand_total || 0).toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2}) }}
+                <span class="text-[10px] ml-1 text-gray-400">{{ String(r.currency || 'LAK').toUpperCase() }}</span>
+              </td>
               <td class="px-4 py-3 text-center" style="border-right: 1px solid var(--color-border)">
                 <input
                   :checked="isTracked(r)"
