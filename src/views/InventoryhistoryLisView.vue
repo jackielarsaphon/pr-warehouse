@@ -192,7 +192,7 @@ function goNext() {
                 {{ creatorLabel(row) }}
               </td>
               <td class="px-4 py-3">
-                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">นำสินค้าเข้า</span>
+                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">นำสินค้าเข้า</span>
               </td>
               <td class="px-4 py-3">
                 <div v-if="row.first_import_document_url || row.document_url" class="flex items-center gap-2">

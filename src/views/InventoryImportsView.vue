@@ -193,19 +193,19 @@ function formatDate(iso) {
                 +{{ imp.amount }}
               </td>
               <td class="px-4 py-3" style="color: var(--color-text-muted)">{{ imp.unit }}</td>
-              <td class="px-4 py-3">
-                <div class="flex items-center gap-2">
-                  <div class="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-[10px] font-bold text-blue-600">
-                    {{ imp.creator?.fullname?.charAt(0) }}
-                  </div>
-                  <span style="color: var(--color-text-secondary)">{{ imp.creator?.fullname || '-' }}</span>
-                </div>
+
+              <!-- ✅ ผู้ดำเนินการ: เอา avatar วงกลมออก แสดงชื่อธรรมดา -->
+              <td class="px-4 py-3" style="color: var(--color-text-secondary)">
+                {{ imp.creator?.fullname || '-' }}
               </td>
+
+              <!-- ✅ ประเภทรายการ: badge สีเขียว -->
               <td class="px-4 py-3">
-                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700">
                   เติมสินค้า (Restock)
                 </span>
               </td>
+
               <td class="px-4 py-3">
                 <div v-if="imp.document_url" class="flex items-center gap-2">
                   <a :href="imp.document_url" target="_blank" class="text-blue-600 hover:underline">เปิดไฟล์</a>

@@ -88,12 +88,12 @@ onMounted(() => {
              :style="currentPath === '/u/create' ? '' : 'color: var(--color-text-secondary)'">
             เบิกพัสดุ
           </router-link>
-          <router-link to="/u/create-pr"
+          <!-- <router-link to="/u/create-pr"
              class="px-4 py-2 rounded-full text-[13px] font-medium transition-colors"
              :class="currentPath === '/u/create-pr' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-slate-700'"
              :style="currentPath === '/u/create-pr' ? '' : 'color: var(--color-text-secondary)'">
             คำขอ PR
-          </router-link>
+          </router-link> -->
           <router-link to="/u/inspectionuser"
              class="px-4 py-2 rounded-full text-[13px] font-medium transition-colors"
              :class="currentPath === '/u/inspectionuser' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-slate-700'"

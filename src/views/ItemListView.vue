@@ -787,11 +787,12 @@ async function saveCategory() {
 
               <td class="px-4 py-3 font-mono" style="color: var(--color-text-muted)">{{ item.item_code }}</td>
               <td class="px-4 py-3 font-medium" style="color: var(--color-text-primary)">{{ item.item_name }}</td>
+
+              <!-- ✅ แก้ไขตรงนี้: เอา badge สีฟ้าออก แสดงข้อความธรรมดา -->
               <td class="px-4 py-3" style="color: var(--color-text-secondary)">
-                <span class="px-2 py-0.5 rounded-full text-[11px] bg-blue-50 dark:bg-blue-800/30 text-blue-700 hover:bg-blue-100 dark:text-blue-300 border border-blue-600 dark:border-blue-800/30 transition-colors cursor-w-resize">
-                  {{ item.category?.category_name || 'ไม่มีประเภท' }}
-                </span>
+                {{ item.category?.category_name || 'ไม่มีประเภท' }}
               </td>
+
               <td class="px-4 py-3" style="color: var(--color-text-secondary)">
                 {{ item.usage_type || '-' }}
               </td>

@@ -8,7 +8,7 @@ const auth = useAuthStore()
 const ui = useUiStore()
 
 const props = defineProps({
-  type: { type: String, default: 'all' },
+  type: { type: String, default: 'exp' },
 })
 
 const loading = ref(true)
@@ -38,7 +38,7 @@ async function fetchRows() {
   loading.value = true
   try {
     const { data, error } = await supabase
-      .from('ap_requests')
+      .from('exp_requests')
       .select('id, ap_number, po_id, item_ref, total_price, currency_name, option_name, ap_status, updated_at')
       .eq('ap_status', 'ยังไม่ชำระ')
       .order('updated_at', { ascending: false })
@@ -87,7 +87,7 @@ async function markPaidComplete(row) {
   try {
     const updatedBy = createdByText()
     const { error } = await supabase
-      .from('ap_requests')
+      .from('exp_requests')
       .update({
         ap_status: 'ชำระแล้ว',
         updated_by: updatedBy,
@@ -108,9 +108,9 @@ async function markPaidComplete(row) {
   <div>
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
       <div>
-        <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">รายการสลิป</h1>
+        <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">รายการสลิป Exp</h1>
         <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">
-          แสดงเฉพาะสถานะ AP: ยังไม่ชำระ • ทั้งหมด {{ totalRows }} รายการ
+          แสดงเฉพาะสถานะ Exp: ยังไม่ชำระ • ทั้งหมด {{ totalRows }} รายการ
         </p>
       </div>
       <button
@@ -129,7 +129,7 @@ async function markPaidComplete(row) {
         <input
           v-model="searchText"
           type="text"
-          placeholder="ค้นหา เลข AP, เลข PO, รายการ, สถานะ..."
+          placeholder="ค้นหา เลข AP (Exp), เลข PO, รายการ, สถานะ..."
           class="w-full pl-9 pr-3 py-2 bg-transparent border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all"
           style="border-color: var(--color-border); color: var(--color-text-primary)"
         />
@@ -141,12 +141,12 @@ async function markPaidComplete(row) {
         <table class="w-full text-[13px] min-w-[1200px] border-collapse">
           <thead>
             <tr style="background: var(--color-bg-body); border-bottom: 1px solid var(--color-border)">
-              <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลข AP</th>
+              <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลข AP (Exp)</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลข PO</th>
               <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">รายการ</th>
               <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ยอด</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ความเร่งด่วน</th>
-              <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">AP Status</th>
+              <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">Exp Status</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">อัปเดต</th>
             </tr>
           </thead>

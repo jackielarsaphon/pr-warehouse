@@ -247,6 +247,28 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   })
   const appoRowsState = ref([])
   const appoApSearchTextState = ref('')
+
+  // Persistent state for expFormView.vue
+  const expFormState = ref({
+    ap_number: '',
+    po_id: '',
+    po_date: '',
+    supplier_name: '',
+    item_ref: '',
+    qty_order: null,
+    department: '',
+    po_created_by: '',
+    date_transfer: '',
+    option_name: '',
+    total_price: null,
+    currency_name: 'LAK',
+    ap_status: '',
+    qty_received: null,
+    desired_date: '',
+    remark: '',
+  })
+  const expRowsState = ref([])
+  const expApSearchTextState = ref('')
   
   // Default date range is rolling 4 months (current month + previous 3 months).
   const getInitialDates = () => {
@@ -692,6 +714,8 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     loading, lastFetched, isLoaded,
     dateFrom, dateTo,
     appoFormState, appoRowsState, appoApSearchTextState,
+    expFormState, expRowsState, expApSearchTextState,
+    pendingAutofill,
     fetchAll, fetchTrcloudData
   }
 })

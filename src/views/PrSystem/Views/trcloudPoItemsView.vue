@@ -6,9 +6,14 @@ import { useAuthStore } from '@/stores/auth'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
+const emit = defineEmits(['selectPage'])
 const searchQuery = ref('')
 const statusFilter = ref('')
 const viewMode = ref('all') // 'all' or 'tracked'
+const openMenuId = ref(null) // ID ของแถวที่เปิดเมนูค้างไว้
+const selectedRows = ref([]) // รายการที่เลือกเพื่อส่งไปฟอร์ม
+const showSelection = ref(false) // แสดง checkbox เพื่อเลือกหลายรายการ
+const headerMenuOpen = ref(false) // เปิดเมนูที่หัวตาราง
 
 const TRACK_STORAGE_KEY = 'trcloud_po_tracked_rows'
 const TRACK_TABLE = 'trcloud_tracking'
@@ -224,9 +229,86 @@ async function refreshPoItemRows() {
   sortingTrackedIds.value = [...trackedRowIds.value]
 }
 
+function getIdentityString(row) {
+  const doc = row.doc_number || row.invoice_number || '-'
+  const item = row.item_name || '-'
+  return `${doc} | ${item} [PO]`
+}
+
+function sendToExp(rows) {
+  const items = Array.isArray(rows) ? rows : [rows]
+  if (items.length === 0) return
+
+  const identities = items.map(r => getIdentityString(r))
+  
+  trcloudStore.pendingAutofill = identities
+  emit('selectPage', { itemId: "/#/form_submit_exp", itemLabel: "ฟอมร์ส่งรายการ Exp" })
+  openMenuId.value = null
+  selectedRows.value = []
+}
+
+function isSelected(row) {
+  return selectedRows.value.some(r => getRowIdentity(r) === getRowIdentity(row))
+}
+
+function toggleSelectRow(row) {
+  const docNum = row.doc_number
+  if (!docNum) {
+    const id = getRowIdentity(row)
+    const index = selectedRows.value.findIndex(r => getRowIdentity(r) === id)
+    if (index === -1) selectedRows.value.push(row)
+    else selectedRows.value.splice(index, 1)
+    return
+  }
+
+  const sameDocRows = filteredRows.value.filter(r => r.doc_number === docNum)
+  const isCurrentlySelected = isSelected(row)
+
+  if (isCurrentlySelected) {
+    const currentId = getRowIdentity(row)
+    selectedRows.value = selectedRows.value.filter(r => getRowIdentity(r) !== currentId)
+  } else {
+    const currentSelectedIds = new Set(selectedRows.value.map(r => getRowIdentity(r)))
+    const toAdd = sameDocRows.filter(r => !currentSelectedIds.has(getRowIdentity(r)))
+    selectedRows.value.push(...toAdd)
+  }
+}
+
+const isAllSelected = computed(() => {
+  if (filteredRows.value.length === 0) return false
+  return filteredRows.value.every(row => isSelected(row))
+})
+
+function toggleSelectAll() {
+  if (isAllSelected.value) {
+    selectedRows.value = []
+  } else {
+    selectedRows.value = [...filteredRows.value]
+  }
+}
+
+function enableSelectionMode() {
+  showSelection.value = true
+  headerMenuOpen.value = false
+}
+
+function cancelSelectionMode() {
+  showSelection.value = false
+  selectedRows.value = []
+}
+
+function toggleMenu(id) {
+  if (openMenuId.value === id) {
+    openMenuId.value = null
+  } else {
+    openMenuId.value = id
+  }
+}
+
 // ล้างข้อมูลทุกครั้งที่ข้อมูลใน Store เปลี่ยนแปลง
 watch(() => trcloudStore.poItemRows, () => {
   cleanupTrackedIds()
+  selectedRows.value = []
 }, { deep: true })
 
 // Update sorting order when switching view mode
@@ -305,6 +387,25 @@ onMounted(() => {
         <i class="fa-solid fa-rotate mr-2" :class="loading ? 'fa-spin' : ''"></i>
         รีเฟรชข้อมูล
       </button>
+
+      <!-- ปุ่มส่งหลายรายการ -->
+      <div v-if="showSelection" class="flex items-center gap-2 animate-in fade-in slide-in-from-right-2">
+        <button 
+          @click="cancelSelectionMode"
+          class="px-4 py-2 rounded-lg text-[13px] font-medium border hover:bg-gray-50 transition-colors"
+          style="border-color: var(--color-border); color: var(--color-text-secondary); background: var(--color-bg-card)"
+        >
+          ยกเลิก
+        </button>
+        <button 
+          :disabled="selectedRows.length === 0"
+          @click="sendToExp(selectedRows)" 
+          class="px-4 py-2 rounded-lg text-[13px] font-medium bg-green-600 text-white hover:bg-green-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <i class="fa-solid fa-paper-plane mr-2"></i>
+          ส่ง {{ selectedRows.length }} รายการไป Exp
+        </button>
+      </div>
     </div>
 
     <div class="rounded-xl border overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
@@ -312,6 +413,40 @@ onMounted(() => {
         <table class="w-full text-[13px] min-w-[1310px] border-collapse table-fixed">
           <thead>
             <tr class="text-left" style="background: var(--color-bg-body); border-bottom: 1px solid var(--color-border)">
+              <th class="px-4 py-3 font-medium w-[50px] text-center relative" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">
+                <div v-if="showSelection">
+                  <input 
+                    type="checkbox" 
+                    :checked="isAllSelected" 
+                    @change="toggleSelectAll"
+                    class="w-4 h-4 accent-blue-600 cursor-pointer"
+                  />
+                </div>
+                <div v-else>
+                  <button 
+                    @click="headerMenuOpen = !headerMenuOpen"
+                    class="p-1 hover:bg-gray-100 rounded-md transition-colors"
+                  >
+                    <i class="fa-solid fa-ellipsis-vertical text-gray-500"></i>
+                  </button>
+                  
+                  <!-- Header Dropdown Menu -->
+                  <div 
+                    v-if="headerMenuOpen"
+                    class="absolute left-0 mt-2 w-48 rounded-lg shadow-xl border z-50 py-1 text-left"
+                    style="background: var(--color-bg-card); border-color: var(--color-border)"
+                  >
+                    <button 
+                      @click="enableSelectionMode"
+                      class="w-full text-left px-4 py-2 text-[12px] hover:bg-blue-50 transition-colors flex items-center gap-2"
+                      style="color: var(--color-text-primary)"
+                    >
+                      <i class="fa-solid fa-list-check text-blue-500"></i>
+                      ส่งข้อมูลฟอร์ม Exp
+                    </button>
+                  </div>
+                </div>
+              </th>
               <th class="px-4 py-3 font-medium w-[130px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">เลขที่เอกสาร</th>
               <th class="px-4 py-3 font-medium w-[130px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">อ้างอิงEXP</th>
               <th class="px-4 py-3 font-medium w-[100px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">วันที่</th>
@@ -337,9 +472,43 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-else-if="!filteredRows.length">
-              <td colspan="13" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ PO รายการสินค้า</td>
+              <td colspan="14" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ PO รายการสินค้า</td>
             </tr>
-            <tr v-for="row in filteredRows" :key="`${row.doc_number || ''}_${row.item_name || ''}_${row.price || ''}`" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="(row, index) in filteredRows" :key="getRowIdentity(row)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
+              <td class="px-4 py-3 text-center relative" style="border-right: 1px solid var(--color-border)">
+                <div v-if="showSelection">
+                  <input 
+                    type="checkbox" 
+                    :checked="isSelected(row)" 
+                    @change="toggleSelectRow(row)"
+                    class="w-4 h-4 accent-blue-600 cursor-pointer"
+                  />
+                </div>
+                <div v-else>
+                  <button 
+                    @click="toggleMenu(`${row.doc_number}_${index}`)"
+                    class="p-1 hover:bg-gray-100 rounded-md transition-colors"
+                  >
+                    <i class="fa-solid fa-ellipsis-vertical text-gray-500"></i>
+                  </button>
+                  
+                  <!-- Row Dropdown Menu -->
+                  <div 
+                    v-if="openMenuId === `${row.doc_number}_${index}`"
+                    class="absolute left-full top-0 ml-1 w-48 rounded-lg shadow-xl border z-50 py-1 text-left"
+                    style="background: var(--color-bg-card); border-color: var(--color-border)"
+                  >
+                    <button 
+                      @click="sendToExp(row)"
+                      class="w-full text-left px-4 py-2 text-[12px] hover:bg-blue-50 transition-colors flex items-center gap-2"
+                      style="color: var(--color-text-primary)"
+                    >
+                      <i class="fa-solid fa-paper-plane text-blue-500"></i>
+                      ส่งไปฟอร์ม Exp
+                    </button>
+                  </div>
+                </div>
+              </td>
               <td class="px-4 py-3 font-mono break-all" style="color: var(--color-text-primary)">{{ row.doc_number || '-' }}</td>
               <td class="px-4 py-3 font-mono break-all" style="color: var(--color-text-primary)">{{ row.expense || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.issue_date || '-' }}</td>

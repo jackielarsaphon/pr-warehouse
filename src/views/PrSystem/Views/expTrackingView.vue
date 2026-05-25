@@ -8,7 +8,7 @@ const ui = useUiStore()
 const emit = defineEmits(['editRow'])
 const props = defineProps({
   refreshKey: { type: Number, default: 0 },
-  type: { type: String, default: 'all' },
+  type: { type: String, default: 'exp' },
 })
 
 const loading = ref(true)
@@ -38,8 +38,8 @@ function explainSupabasePolicyHint(err) {
     code === '42501'
   ) {
     return (
-      'ตาราง ap_requests เปิด RLS อยู่ แต่ยังไม่มี Policy อนุญาตให้ role: anon อ่านข้อมูลได้\n' +
-      'ให้ไปที่ Supabase > Table Editor > ap_requests > RLS แล้วสร้าง Policy สำหรับ SELECT (หรือปิด RLS ถ้าต้องการให้เห็นได้เลย)'
+      'ตาราง exp_requests เปิด RLS อยู่ แต่ยังไม่มี Policy อนุญาตให้ role: anon อ่านข้อมูลได้\n' +
+      'ให้ไปที่ Supabase > Table Editor > exp_requests > RLS แล้วสร้าง Policy สำหรับ SELECT (หรือปิด RLS ถ้าต้องการให้เห็นได้เลย)'
     )
   }
 
@@ -131,7 +131,7 @@ async function fetchRows() {
   loading.value = true
   try {
     const { data, error } = await supabase
-      .from('ap_requests')
+      .from('exp_requests')
       .select(
         'id, ap_number, po_id, po_date, supplier_name, item_ref, qty_order, department, po_created_by, date_transfer, option_name, total_price, currency_name, ap_status, qty_received, qty_auto, desired_date, remark, amount_received, amount_balance, created_by, updated_by, created_at, updated_at'
       )
@@ -218,7 +218,7 @@ function onEditRow(r) {
 async function removeRow(row) {
   const result = await Swal.fire({
     title: 'คุณต้องการลบข้อมูล?',
-    text: `ต้องการลบรายการ AP: ${row.ap_number || '-'} ใช่หรือไม่?`,
+    text: `ต้องการลบรายการ Exp: ${row.ap_number || '-'} ใช่หรือไม่?`,
     icon: 'warning',
     showCancelButton: true,
     confirmButtonColor: '#ef4444',
@@ -231,7 +231,7 @@ async function removeRow(row) {
   if (!result.isConfirmed) return
 
   try {
-    const { error } = await supabase.from('ap_requests').delete().eq('id', row.id)
+    const { error } = await supabase.from('exp_requests').delete().eq('id', row.id)
     if (error) throw error
 
     Swal.fire({
@@ -267,7 +267,7 @@ async function removeSelectedRows() {
 
   loading.value = true
   try {
-    const { error } = await supabase.from('ap_requests').delete().in('id', selectedIds.value)
+    const { error } = await supabase.from('exp_requests').delete().in('id', selectedIds.value)
     if (error) throw error
 
     selectedIds.value = []
@@ -373,8 +373,8 @@ const currencyTotals = computed(() => {
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
       <div class="flex items-center gap-3">
         <div>
-          <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ตารางติดตาม</h1>
-          <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">ข้อมูลจากตาราง ap_requests</p>
+          <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ตารางติดตาม Exp</h1>
+          <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">ข้อมูลจากตาราง exp_requests</p>
         </div>
         <div class="relative group">
           <button
@@ -453,7 +453,7 @@ const currencyTotals = computed(() => {
         </div>
 
         <div class="lg:col-span-4">
-          <div class="text-[11px] font-medium mb-1" style="color: var(--color-text-muted)">สถานะ AP</div>
+          <div class="text-[11px] font-medium mb-1" style="color: var(--color-text-muted)">สถานะ Exp</div>
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
@@ -484,7 +484,7 @@ const currencyTotals = computed(() => {
               v-model="searchText"
               @input="onFilterChanged"
               type="text"
-              placeholder="เลข AP / PO / ผู้ขาย / รายการ..."
+              placeholder="เลข AP (Exp) / PO / ผู้ขาย / รายการ..."
               class="w-full pl-9 pr-3 py-1.5 bg-transparent border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all"
               style="border-color: var(--color-border); color: var(--color-text-primary)"
             />
@@ -596,10 +596,10 @@ const currencyTotals = computed(() => {
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ผู้ขาย</th>
               <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ยอด</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ความเร่งด่วน</th>
-              <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">AP Status</th>
+              <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">AP Status (Exp)</th>
               <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: var(--color-text-muted)">สั่ง</th>
               <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: var(--color-text-muted)">รับแล้ว</th>
-              <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ค้างรับ</th>
+              <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: #ef4444)">ค้างรับ</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ต้องการ</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">หมายเหตุ</th>
               <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">คนเปิด PO</th>
@@ -626,7 +626,7 @@ const currencyTotals = computed(() => {
                 />
               </td>
               <td class="px-4 py-3 align-top whitespace-nowrap">
-                <div class="font-semibold" style="color: #2563eb">AP: {{ r.ap_number || '-' }}</div>
+                <div class="font-semibold" style="color: #2563eb">AP(Exp): {{ r.ap_number || '-' }}</div>
                 <div class="font-medium" style="color: var(--color-text-primary)">PO: {{ r.po_id || '-' }}</div>
                 <div class="text-[12px]" style="color: var(--color-text-muted)">{{ formatThaiDate(r.po_date) }}</div>
               </td>

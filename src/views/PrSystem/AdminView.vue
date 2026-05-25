@@ -17,6 +17,10 @@ import AppoView from "./Views/appoView.vue"
 import TrackingView from "./Views/trackingView.vue"
 import SlipView from "./Views/slipView.vue"
 import LineView from "./Views/lineView.vue"
+import ExpFormView from "./Views/expFormView.vue"
+import ExpTrackingView from "./Views/expTrackingView.vue"
+import ExpSlipView from "./Views/expSlipView.vue"
+import ExpLineView from "./Views/expLineView.vue"
 import PrView from "./Views/prView.vue"
 import PoView from "./Views/poView.vue"
 import ApView from "./Views/apView.vue"
@@ -50,11 +54,14 @@ const selectionOptions = [
   { itemId: "/#/pr_trcloud", itemLabel: "เอกสาร TRCloud" },
   { itemId: "/#/pr_pv", itemLabel: "รายการ PV" },
   { itemId: "/#/pr_history", itemLabel: "ประวัติทั้งหมด" },
-  { itemId: "/#/form_submit", itemLabel: "ฟอมร์ส่งรายการ" },
-  { itemId: "/#/form_appo", itemLabel: "ฟอร์ม AP/PO" },
-  { itemId: "/#/form_tracking", itemLabel: "ตรางติดตาม" },
-  { itemId: "/#/form_slip_match", itemLabel: "จับคู่สลิบโอน" },
-  { itemId: "/#/form_line_message", itemLabel: "ส่งข้อความ LINE" },
+  { itemId: "/#/form_submit_exp", itemLabel: "ฟอมร์ส่งรายการ Exp" },
+  { itemId: "/#/form_tracking_exp", itemLabel: "ตรางติดตาม Exp" },
+  { itemId: "/#/form_slip_exp", itemLabel: "จับคู่สลิบโอน Exp" },
+  { itemId: "/#/form_line_exp", itemLabel: "ส่งข้อความ LINE Exp" },
+  { itemId: "/#/form_submit_ap", itemLabel: "ฟอมร์ส่งรายการ AP" },
+  { itemId: "/#/form_tracking_ap", itemLabel: "ตรางติดตาม AP" },
+  { itemId: "/#/form_slip_ap", itemLabel: "จับคู่สลิบโอน AP" },
+  { itemId: "/#/form_line_ap", itemLabel: "ส่งข้อความ LINE AP" },
   { itemId: "/#/system_admins_purchase", itemLabel: "รายการความเร่งด่วน" },
   { itemId: "/#/system_admins_receive", itemLabel: "รายการทีมจัดซื้อ" },
   { itemId: "/#/system_admins_accept", itemLabel: "สถานะรับงาน" },
@@ -101,11 +108,18 @@ const activePage = computed(() => {
   if (id.includes("system_admins_inspect")) return "system_admins_inspect"
   if (id.includes("system_users")) return "system_users"
   if (id.includes("usage_logs")) return "usage_logs"
-  if (id.includes("form_appo")) return "form_appo"
+  if (id.includes("form_submit")) return "form_submit"
   if (id.includes("form_tracking")) return "form_tracking"
-  if (id.includes("form_slip_match")) return "form_slip_match"
-  if (id.includes("form_line_message")) return "form_line_message"
+  if (id.includes("form_slip")) return "form_slip"
+  if (id.includes("form_line")) return "form_line"
   return "default"
+})
+
+const pageType = computed(() => {
+  const id = (selection.value.itemId ?? "").toString()
+  if (id.endsWith("_exp")) return "exp"
+  if (id.endsWith("_ap")) return "ap"
+  return "all"
 })
 
 const onSelect = (payload) => {
@@ -119,18 +133,24 @@ const onSelect = (payload) => {
 
 function onEditApRequest(row) {
   editApRequestId.value = row?.id ?? null
-  selection.value = normalizeSelection({ itemId: "/#/form_appo", itemLabel: "ฟอร์ม AP/PO" })
+  const targetId = pageType.value === "ap" ? "/#/form_submit_ap" : "/#/form_submit_exp"
+  const targetLabel = pageType.value === "ap" ? "ฟอมร์ส่งรายการ AP" : "ฟอมร์ส่งรายการ Exp"
+  selection.value = normalizeSelection({ itemId: targetId, itemLabel: targetLabel })
 }
 
 function onEditedApRequest() {
   editApRequestId.value = null
   trackingRefreshKey.value += 1
-  selection.value = normalizeSelection({ itemId: "/#/form_tracking", itemLabel: "ตรางติดตาม" })
+  const targetId = pageType.value === "ap" ? "/#/form_tracking_ap" : "/#/form_tracking_exp"
+  const targetLabel = pageType.value === "ap" ? "ตรางติดตาม AP" : "ตรางติดตาม Exp"
+  selection.value = normalizeSelection({ itemId: targetId, itemLabel: targetLabel })
 }
 
 function onCancelEditApRequest() {
   editApRequestId.value = null
-  selection.value = normalizeSelection({ itemId: "/#/form_tracking", itemLabel: "ตรางติดตาม" })
+  const targetId = pageType.value === "ap" ? "/#/form_tracking_ap" : "/#/form_tracking_exp"
+  const targetLabel = pageType.value === "ap" ? "ตรางติดตาม AP" : "ตรางติดตาม Exp"
+  selection.value = normalizeSelection({ itemId: targetId, itemLabel: targetLabel })
 }
 
 onMounted(() => {
@@ -206,20 +226,50 @@ const onLogout = async () => {
         <JobStatusView v-else-if="activePage === 'system_admins_accept'" />
         <StoreView v-else-if="activePage === 'system_admins_store'" />
         <PurchaseView v-else-if="activePage === 'system_admins_inspect'" />
+        
+        <!-- AP Forms -->
         <AppoView 
-  v-else-if="activePage === 'form_appo'" 
-  :editId="editApRequestId" 
-  @edited="onEditedApRequest" 
-  @cancelEdit="onCancelEditApRequest"
-  @selectPage="onSelect" 
-/>
-        <TrackingView v-else-if="activePage === 'form_tracking'" :refreshKey="trackingRefreshKey" @editRow="onEditApRequest" />
-        <SlipView v-else-if="activePage === 'form_slip_match'" />
-        <LineView v-else-if="activePage === 'form_line_message'" />
+          v-else-if="activePage === 'form_submit' && pageType === 'ap'" 
+          :editId="editApRequestId" 
+          :type="pageType"
+          @edited="onEditedApRequest" 
+          @cancelEdit="onCancelEditApRequest"
+          @selectPage="onSelect" 
+        />
+        <TrackingView 
+          v-else-if="activePage === 'form_tracking' && pageType === 'ap'" 
+          :refreshKey="trackingRefreshKey" 
+          :type="pageType"
+          @editRow="onEditApRequest" 
+        />
+        <SlipView v-else-if="activePage === 'form_slip' && pageType === 'ap'" :type="pageType" />
+        <LineView v-else-if="activePage === 'form_line' && pageType === 'ap'" :type="pageType" />
+
+        <!-- Exp Forms -->
+        <ExpFormView 
+          v-else-if="activePage === 'form_submit' && pageType === 'exp'" 
+          :editId="editApRequestId" 
+          :type="pageType"
+          @edited="onEditedApRequest" 
+          @cancelEdit="onCancelEditApRequest"
+          @selectPage="onSelect" 
+        />
+        <ExpTrackingView 
+          v-else-if="activePage === 'form_tracking' && pageType === 'exp'" 
+          :refreshKey="trackingRefreshKey" 
+          :type="pageType"
+          @editRow="onEditApRequest" 
+        />
+        <ExpSlipView v-else-if="activePage === 'form_slip' && pageType === 'exp'" :type="pageType" />
+        <ExpLineView v-else-if="activePage === 'form_line' && pageType === 'exp'" :type="pageType" />
+
         <PrView v-else-if="activePage === 'pr_list'" />
         <PoView v-else-if="activePage === 'pr_po'" />
         <ApView v-else-if="activePage === 'pr_ap'" />
-        <TrcloudPoItemsView v-else-if="activePage === 'pr_po_items'" />
+        <TrcloudPoItemsView 
+          v-else-if="activePage === 'pr_po_items'" 
+          @selectPage="onSelect" 
+        />
         <TrcloudApItemsView 
           v-else-if="activePage === 'pr_ap_items'" 
           @selectPage="onSelect" 

@@ -11,7 +11,7 @@ const menuGroups = [
     label: 'ภาพรวม',
     items: [
       { label: 'แดชบอร์ด', icon: 'fa-gauge-high', path: '/dashboard' },
-      { label: 'สรุปรายละเอียด', icon: 'fa-chart-line', path: '/reports' },
+      // { label: 'สรุปรายละเอียด', icon: 'fa-chart-line', path: '/reports' },
     ]
   },
   {

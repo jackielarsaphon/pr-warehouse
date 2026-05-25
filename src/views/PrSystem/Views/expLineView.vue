@@ -8,7 +8,7 @@ const auth = useAuthStore()
 const ui = useUiStore()
 
 const props = defineProps({
-  type: { type: String, default: 'all' },
+  type: { type: String, default: 'exp' },
 })
 
 const loading = ref(true)
@@ -103,7 +103,7 @@ async function fetchRows() {
   try {
     fetchCounts()
     const base = supabase
-      .from('ap_requests')
+      .from('exp_requests')
       .select('id, ap_number, po_id, supplier_name, item_ref, qty_order, qty_received, total_price, currency_name, desired_date, remark, option_name, ap_status')
 
     const q =
@@ -129,7 +129,7 @@ async function fetchRows() {
 async function fetchCounts() {
   countsLoading.value = true
   try {
-    const { data, error } = await supabase.from('ap_requests').select('ap_status')
+    const { data, error } = await supabase.from('exp_requests').select('ap_status')
     if (error) throw error
     const list = data || []
     statusCounts.value = {
@@ -172,7 +172,7 @@ const slipHeaderText = computed(() => {
     const r = selectedRows.value[0]
     const ap = String(r.ap_number || '').trim() || '-'
     const status = String(r.ap_status || '').trim() || '-'
-    return `AP: ${ap} | ${status}`
+    return `AP(Exp): ${ap} | ${status}`
   }
   return `เลือก ${selectedRowIds.value.length} รายการ`
 })
@@ -188,10 +188,8 @@ function selectRow(id) {
   const isAlreadySelected = selectedRowIds.value.includes(id)
   
   if (isAlreadySelected) {
-    // เอาออกเฉพาะรายการที่คลิก เพื่อให้สามารถยกเลิกบางรายการในกลุ่มได้
     selectedRowIds.value = selectedRowIds.value.filter(x => x !== id)
   } else {
-    // เพิ่มทั้งกลุ่มที่มี ap_number เดียวกัน
     const apNum = r.ap_number
     const sameApRows = (rows.value || []).filter(x => x.ap_number === apNum)
     const sameApIds = sameApRows.map(x => x.id)
@@ -243,11 +241,10 @@ function buildMultiPaymentMessage(selectedList) {
   const now = new Date()
   const headerDate = formatThaiDateBuddhist(now)
   const blocks = []
-  blocks.push(`📋 สรุปรายการขอชำระเงิน [จัดซื้อ สปป.ลาว]`)
+  blocks.push(`📋 สรุปรายการขอชำระเงิน Exp [จัดซื้อ สปป.ลาว]`)
   blocks.push(`วันที่: ${headerDate}`)
   blocks.push(`————————`)
 
-  // Group by urgency category
   const categories = {
     urgent_max: [],
     urgent: [],
@@ -265,9 +262,7 @@ function buildMultiPaymentMessage(selectedList) {
     if (!catRows.length) continue
     
     blocks.push(paymentSectionTitle(catRows[0].option_name))
-    // blocks.push(``) // Remove extra newline
 
-    // Group by Supplier within category
     const supplierGroups = {}
     for (const r of catRows) {
       const supplier = r.supplier_name || 'ไม่ระบุผู้ขาย'
@@ -279,7 +274,6 @@ function buildMultiPaymentMessage(selectedList) {
       const groupSumByCurrency = {}
       let groupPendingItemCount = 0
       
-      // Group by AP number within supplier
       const apGroups = {}
       for (const r of groupRows) {
         const ap = r.ap_number || '-'
@@ -330,7 +324,7 @@ function buildMultiPaymentMessage(selectedList) {
     blocks.push(`————————`)
   }
 
-  blocks.push(`📊 สรุปรวมยอดรอชำระ`)
+  blocks.push(`📊 สรุปรวมยอดรอชำระ Exp`)
   blocks.push(`💰 ${currencySumText(overallSumByCurrency)}`)
   blocks.push(`📦 ของค้างรับ PO เดิม: ${formatNumber(overallPendingItemCount)} รายการ — โปรดตามซัพพลายเออร์`)
   blocks.push(`————————`)
@@ -363,7 +357,7 @@ function buildSlipConfirmMessageFromRows(list) {
   })
 
   const blocks = []
-  blocks.push(`✅ ยืนยันรับสลิปโอน`)
+  blocks.push(`✅ ยืนยันรับสลิปโอน Exp`)
   blocks.push(`วันที่รับ: ${dateText} เวลา: ${timeText}`)
   blocks.push(`————————`)
   blocks.push(``)
@@ -394,7 +388,7 @@ function buildSlipConfirmMessageFromRows(list) {
   }
 
   blocks.push(`————————`)
-  blocks.push(`📌 PO ที่มีของค้างรับ — โปรดช่วยตามกับซัพพลายเออร์:`)
+  blocks.push(`📌 PO ที่มีของค้างรับ (Exp) — โปรดช่วยตามกับซัพพลายเออร์:`)
 
   const pendingMap = new Map()
   for (const r of rowsAll) {
@@ -451,7 +445,7 @@ function resetMessage() {
   editableText.value = generatedMessageText.value || ''
 }
 
-// ---- statuses — query view_mode แยกกัน ----
+// ---- statuses ----
 async function fetchStatuses() {
   const ids = new Set((rows.value || []).map((r) => r?.id).filter((x) => x != null))
   if (!ids.size) {
@@ -464,7 +458,7 @@ async function fetchStatuses() {
     const { data: logs, error } = await supabase
       .from('user_logs')
       .select('id, system_user_id, action, view_mode, old_value, created_at')
-      .in('action', ['line_copy_ap_request', 'line_read_ap_request'])
+      .in('action', ['line_copy_exp_request', 'line_read_exp_request', 'line_copy_ap_request', 'line_read_ap_request'])
       .order('created_at', { ascending: false })
       .limit(2000)
 
@@ -474,19 +468,18 @@ async function fetchStatuses() {
     const userIds = new Set()
 
     for (const l of logs || []) {
-      const reqId = l?.old_value?.ap_request_id
+      const reqId = l?.old_value?.ap_request_id || l?.old_value?.exp_request_id
       if (reqId == null) continue
       if (!ids.has(reqId)) continue
 
-      // log เก่าที่ไม่มี view_mode ถือเป็น 'pay' (backward compat)
       const mode = l.view_mode === 'slip' ? 'slip' : 'pay'
       const entry = nextStatus[mode][reqId] || {}
 
-      if (l.action === 'line_copy_ap_request' && !entry.copiedAt) {
+      if ((l.action === 'line_copy_exp_request' || l.action === 'line_copy_ap_request') && !entry.copiedAt) {
         entry.copiedAt = l.created_at
         entry.copiedBy = l.system_user_id
       }
-      if (l.action === 'line_read_ap_request' && !entry.readAt) {
+      if ((l.action === 'line_read_exp_request' || l.action === 'line_read_ap_request') && !entry.readAt) {
         entry.readAt = l.created_at
         entry.readBy = l.system_user_id
       }
@@ -513,7 +506,6 @@ async function fetchStatuses() {
   }
 }
 
-// ---- log action — บันทึก view_mode ทุกครั้ง ----
 async function logActionForRow(rowId, action) {
   const r = (rows.value || []).find((x) => x.id === rowId)
   if (!r) return
@@ -526,11 +518,11 @@ async function logActionForRow(rowId, action) {
   try {
     const { error } = await supabase.from('user_logs').insert([{
       system_user_id: auth.user.id,
-      action,
+      action: action.replace('ap_request', 'exp_request'),
       view_mode: viewMode.value,
       user_agent: navigator.userAgent,
       old_value: {
-        ap_request_id: r.id,
+        exp_request_id: r.id,
         ap_number: r.ap_number || null,
         po_id: r.po_id || null,
       },
@@ -559,11 +551,11 @@ async function logActionForRows(rowIds, action) {
   try {
     const payload = picked.slice(0, 200).map((r) => ({
       system_user_id: auth.user.id,
-      action,
+      action: action.replace('ap_request', 'exp_request'),
       view_mode: viewMode.value,
       user_agent: navigator.userAgent,
       old_value: {
-        ap_request_id: r.id,
+        exp_request_id: r.id,
         ap_number: r.ap_number || null,
         po_id: r.po_id || null,
       },
@@ -615,10 +607,10 @@ async function markReadRow(r) {
   <div>
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
       <div>
-        <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ส่งข้อความ LINE</h1>
+        <h1 class="text-[20px] font-semibold" style="color: var(--color-text-primary)">ส่งข้อความ LINE Exp</h1>
         <div class="text-[12px] font-normal px-2 mt-1" style="color: var(--color-text-muted)">
-          <span v-if="viewMode === 'slip'">แสดงรายการ AP Status: ชำระแล้ว และ ยังไม่ชำระ</span>
-          <span v-else>แสดงเฉพาะรายการ AP Status: ยังไม่ชำระ</span>
+          <span v-if="viewMode === 'slip'">แสดงรายการ Exp Status: ชำระแล้ว และ ยังไม่ชำระ</span>
+          <span v-else>แสดงเฉพาะรายการ Exp Status: ยังไม่ชำระ</span>
         </div>
         <div class="mt-2 flex items-center gap-2">
           <span class="text-[12px] font-medium" style="color: var(--color-text-muted)">ประเภทรายการ:</span>
@@ -661,7 +653,7 @@ async function markReadRow(r) {
             <input
               v-model="searchText"
               type="text"
-              placeholder="ค้นหา เลข AP, เลข PO, ผู้ขาย, รายการ..."
+              placeholder="ค้นหา เลข AP(Exp), เลข PO, ผู้ขาย, รายการ..."
               class="w-full pl-9 pr-3 py-2 bg-transparent border rounded-lg text-[13px] focus:outline-none focus:ring-1 transition-all"
               style="border-color: var(--color-border); color: var(--color-text-primary)"
             />
@@ -688,7 +680,7 @@ async function markReadRow(r) {
               <div class="flex-1 min-w-0">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                   <div class="min-w-0">
-                    <div class="text-[14px] font-semibold" style="color: #2563eb">{{ r.ap_number || '-' }}</div>
+                    <div class="text-[14px] font-semibold" style="color: #2563eb">AP(Exp): {{ r.ap_number || '-' }}</div>
                     <div class="mt-1 text-[12px]" style="color: var(--color-text-muted)">
                       <span class="font-medium">PO:</span> {{ r.po_id || '-' }}
                     </div>
@@ -725,7 +717,6 @@ async function markReadRow(r) {
                         <span>ต้องการ: {{ r.desired_date ? formatThaiDate(r.desired_date) : '-' }}</span>
                       </div>
 
-                      <!-- ปุ่ม pay mode เท่านั้น -->
                       <div v-if="viewMode === 'pay'" class="pt-1 flex items-center gap-2">
                         <button
                           type="button"
@@ -750,7 +741,6 @@ async function markReadRow(r) {
                   </div>
                 </div>
 
-                <!-- สถานะ copy/read แยกตาม viewMode ปัจจุบัน -->
                 <div
                   v-if="currentModeStatus[r.id]?.copiedAt || currentModeStatus[r.id]?.readAt"
                   class="mt-2 text-[12px] space-y-0.5"
@@ -776,7 +766,7 @@ async function markReadRow(r) {
         <div class="rounded-xl border p-4" style="background: var(--color-bg-card); border-color: var(--color-border)">
           <div class="flex items-center justify-between gap-3 mb-2">
             <div class="text-[13px] font-semibold" style="color: var(--color-text-primary)">
-              ข้อความ
+              ข้อความ Exp
               <span class="ml-2 text-[12px] font-normal" style="color: var(--color-text-muted)">{{ slipHeaderText }}</span>
             </div>
             <div class="flex items-center gap-2">

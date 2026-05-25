@@ -11,7 +11,7 @@ const ui = useUiStore()
 const emit = defineEmits(['edited', 'cancelEdit', 'selectPage'])
 const props = defineProps({
   editId: { type: [Number, String], default: null },
-  type: { type: String, default: 'all' },
+  type: { type: String, default: 'exp' },
 })
 
 const saving = ref(false)
@@ -21,8 +21,8 @@ const editLoading = ref(false)
 const urgentOptions = ref([])
 const departmentOptions = ref([])
 const apSearchText = computed({
-  get: () => trcloudStore.appoApSearchTextState,
-  set: (val) => trcloudStore.appoApSearchTextState = val
+  get: () => trcloudStore.expApSearchTextState,
+  set: (val) => trcloudStore.expApSearchTextState = val
 })
 const apSearching = ref(false)
 const apDropdownOpen = ref(false)
@@ -36,6 +36,16 @@ const expandedRowIds = ref([])
 const showAddedTable = ref(false)
 const addedTableRef = ref(null)
 const editingTmpId = ref(null) // ID ของรายการในตารางชั่วคราวที่กำลังแก้ไข
+
+const form = computed({
+  get: () => trcloudStore.expFormState,
+  set: (val) => trcloudStore.expFormState = val
+})
+
+const rows = computed({
+  get: () => trcloudStore.expRowsState,
+  set: (val) => trcloudStore.expRowsState = val
+})
 
 async function fetchUrgentOptions() {
   try {
@@ -170,10 +180,13 @@ async function fetchApAutofill(apIdentity) {
 
   apInfoLoading.value = true
   try {
-    // Parse "Doc Number | Item Name [TYPE]"
-    // Example: "AP20260517-001 | Some Product [AP]"
+    // Ensure data is loaded
     const typeMatch = identity.match(/\[(AP|PO|PR)\]$/)
     const type = typeMatch ? typeMatch[1] : null
+
+    if (type === 'AP' && !trcloudStore.apRows.length) await trcloudStore.fetchTrcloudData('ap')
+    if (type === 'PO' && !trcloudStore.poRows.length) await trcloudStore.fetchTrcloudData('po')
+    if (type === 'PR' && !trcloudStore.prRows.length) await trcloudStore.fetchTrcloudData('pr')
     
     let cleanIdentity = identity
     if (type) {
@@ -183,7 +196,6 @@ async function fetchApAutofill(apIdentity) {
     const [docNum, ...itemParts] = cleanIdentity.split(' | ')
     const itemName = itemParts.join(' | ')
 
-    // 1. Search in the corresponding TRCloud store based on type (or all if type unknown)
     let trcloudItem = null
     
     const searchInAp = () => trcloudStore.apItemRows.find(r => (r.doc_number === docNum || r.invoice_number === docNum) && r.item_name === itemName)
@@ -194,22 +206,23 @@ async function fetchApAutofill(apIdentity) {
     else if (type === 'PO') trcloudItem = searchInPo()
     else if (type === 'PR') trcloudItem = searchInPr()
     else {
-      // Fallback: search all
       trcloudItem = searchInAp() || searchInPo() || searchInPr()
     }
 
     if (trcloudItem) {
-      console.log('Found TRCloud Item:', trcloudItem)
       const poDateIso = isoDateFromAny(trcloudItem.issue_date)
       
-      // 1. เลขที่ AP (จากหน้า trcloudApItemsView.vue ตาราง เลขที่เอกสาร)
-      form.value.ap_number = type === 'AP' ? (trcloudItem.doc_number || trcloudItem.invoice_number || '') : ''
+      // If PO type, use 'expense' (อ้างอิงEXP) as ap_number for Exp form
+      if (type === 'PO') {
+        form.value.ap_number = trcloudItem.expense || ''
+        form.value.po_id = trcloudItem.doc_number || trcloudItem.invoice_number || ''
+      } else {
+        form.value.ap_number = type === 'AP' ? (trcloudItem.doc_number || trcloudItem.invoice_number || '') : ''
+        form.value.po_id = type === 'PO' ? (trcloudItem.doc_number || trcloudItem.invoice_number || '') : (trcloudItem.ref_po || '')
+      }
       
-      // 2. เลขที่ PO และคนเปิด PO (Staff จากหน้า poView.vue)
-      let poId = type === 'PO' ? (trcloudItem.doc_number || trcloudItem.invoice_number || '') : (trcloudItem.ref_po || '')
       let staff = trcloudItem.staff || ''
       
-      // ค้นหาข้อมูลจากรายการ PO เพื่อให้ได้ Staff ที่ถูกต้อง (ถ้าเลือก AP มา)
       if (type === 'AP' || !staff) {
         const relatedPo = trcloudStore.poItemRows.find(p => {
           const isSameDoc = poId && (p.doc_number === poId || p.invoice_number === poId)
@@ -222,21 +235,15 @@ async function fetchApAutofill(apIdentity) {
           staff = relatedPo.staff || ''
         }
       }
-      form.value.po_id = poId
       form.value.po_created_by = staff
 
-      // 3. จำนวนสั่ง
       const rawQty = trcloudItem.quantity || trcloudItem.qty || 0
       form.value.qty_order = !isNaN(parseFloat(rawQty)) ? parseFloat(rawQty) : null
       
-      // 4. แผนกที่ขอ (ดึงมาจากรายการ PR ที่เกี่ยวข้อง)
       let dept = trcloudItem.department || trcloudItem.department_name || ''
       
-      // ถ้าไม่มีแผนกในตัวรายการเอง ให้พยายามค้นหาข้ามไปที่ PR
       if (!dept) {
         const targetItemName = String(trcloudItem.item_name || '').trim().toLowerCase()
-        
-        // ค้นหาจากรายการ PR ที่มีชื่อสินค้าตรงกัน (แบบไม่สนช่องว่างและตัวพิมพ์เล็กใหญ่)
         const relatedPr = trcloudStore.prItemRows.find(p => {
           const prItemName = String(p.item_name || '').trim().toLowerCase()
           return prItemName === targetItemName && targetItemName !== ''
@@ -247,13 +254,11 @@ async function fetchApAutofill(apIdentity) {
         }
       }
       
-      // เพิ่มแผนกใหม่เข้าไปในตัวเลือกถ้ายังไม่มี เพื่อให้ <select> แสดงผลได้
       if (dept && !departmentOptions.value.includes(dept)) {
         departmentOptions.value = [...departmentOptions.value, dept].sort()
       }
       
       form.value.department = dept
-      
       form.value.supplier_name = trcloudItem.organization || ''
       form.value.item_ref = trcloudItem.item_name || ''
       
@@ -262,11 +267,8 @@ async function fetchApAutofill(apIdentity) {
       
       form.value.po_date = poDateIso
 
-      // แมปสถานะจาก TRCloud ให้เป็นคำใหม่ตามต้องการ
-      const rawStatus = String(trcloudItem.status || '').trim()
-      if (rawStatus === 'รอชำระ') form.value.ap_status = 'ยังไม่ชำระ'
-      else if (rawStatus === 'จ่ายครบ') form.value.ap_status = 'ชำระแล้ว'
-      else form.value.ap_status = rawStatus
+      // Force status to "ยังไม่ชำระ" for any data pulled into this form
+      form.value.ap_status = 'ยังไม่ชำระ'
 
       form.value.currency_name = String(trcloudItem.currency || 'LAK').toUpperCase() 
 
@@ -281,7 +283,6 @@ async function fetchApAutofill(apIdentity) {
         department: form.value.department || '-',
         po_created_by: form.value.po_created_by || `TRCloud ${type || 'Data'}`,
       }
-      console.log('Form Autofilled with Cross-ref:', form.value)
       return
     }
 
@@ -316,7 +317,6 @@ function closeApDropdown() {
 async function selectApOption(value) {
   const v = String(value || '').trim()
   apSearchText.value = v
-  // ดึงเฉพาะเลขที่เอกสารออกมา (ก่อนเครื่องหมาย |)
   const docPart = v.split(' | ')[0].trim()
   form.value.ap_number = docPart
   apDropdownOpen.value = false
@@ -325,7 +325,7 @@ async function selectApOption(value) {
 }
 
 function goBack() {
-  emit('selectPage', { itemId: "/#/pr_ap_items", itemLabel: "รายการ AP (สินค้า)" })
+  emit('selectPage', { itemId: "/#/pr_po_items", itemLabel: "TRCloud PO รายการสินค้า" })
 }
 
 function onApInput() {
@@ -356,25 +356,8 @@ function onApKeydown(e) {
   }
 }
 
-const form = computed({
-  get: () => trcloudStore.appoFormState,
-  set: (val) => trcloudStore.appoFormState = val
-})
-
-const rows = computed({
-  get: () => trcloudStore.appoRowsState,
-  set: (val) => trcloudStore.appoRowsState = val
-})
-
 const availableApStatuses = computed(() => {
-  if (!trcloudStore.apItemRows) return []
-  const raw = trcloudStore.apItemRows.map((r) => {
-    const s = String(r.status || '').trim()
-    if (s === 'รอชำระ') return 'ยังไม่ชำระ'
-    if (s === 'จ่ายครบ') return 'ชำระแล้ว'
-    return s
-  }).filter(s => s && s !== 'จ่ายบางส่วน')
-  return [...new Set(raw)].sort()
+  return ['ยังไม่ชำระ', 'ชำระแล้ว']
 })
 
 const qtyAutoPreview = computed(() => {
@@ -415,7 +398,7 @@ function resetForm(keepHeader = true) {
     option_name: '',
     total_price: null,
     currency_name: '',
-    ap_status: '',
+    ap_status: 'ยังไม่ชำระ',
     qty_received: null,
     desired_date: '',
     remark: '',
@@ -430,7 +413,6 @@ function resetForm(keepHeader = true) {
   apInfo.value = null
 }
 
-// เริ่มต้นข้อมูลเฉพาะเมื่อไม่มีข้อมูลใน Store เท่านั้น
 if (!form.value.ap_number && !form.value.po_id && rows.value.length === 0) {
   resetForm(false)
 }
@@ -438,21 +420,18 @@ if (!form.value.ap_number && !form.value.po_id && rows.value.length === 0) {
 onMounted(() => {
   fetchUrgentOptions()
   fetchDepartmentOptions()
-  // Fetch all TRCloud sources early for the dropdown
   trcloudStore.fetchTrcloudData('ap')
   trcloudStore.fetchTrcloudData('po')
   trcloudStore.fetchTrcloudData('pr')
   apSearchText.value = form.value.ap_number || ''
   showAddedTable.value = (rows.value || []).length > 0
 
-  // ตรวจสอบว่ามีการส่งข้อมูลมาจากหน้าอื่นหรือไม่
   if (trcloudStore.pendingAutofill) {
     handleAutofill(trcloudStore.pendingAutofill)
     trcloudStore.pendingAutofill = null
   }
 })
 
-// เพิ่ม watch สำหรับกรณีที่อยู่ในหน้านี้อยู่แล้วและมีการส่งข้อมูลมาใหม่
 watch(() => trcloudStore.pendingAutofill, (val) => {
   if (val) {
     handleAutofill(val)
@@ -464,36 +443,39 @@ async function handleAutofill(val) {
   const list = Array.isArray(val) ? val : [val]
   if (list.length === 0) return
 
-  // วนลูปเพิ่มทุกรายการเข้าตารางทันที
+  ui.showToast(`กำลังโหลดข้อมูล ${list.length} รายการ...`, 'info')
   for (const identity of list) {
     await fetchApAutofill(identity)
-    
-    const payload = {
-      ap_number: (form.value.ap_number || '').trim() || null,
-      po_id: (form.value.po_id || '').trim() || null,
-      po_date: form.value.po_date || null,
-      supplier_name: (form.value.supplier_name || '').trim() || null,
-      item_ref: (form.value.item_ref || '').trim() || null,
-      qty_order: form.value.qty_order === null || form.value.qty_order === '' ? null : Number(form.value.qty_order),
-      department: (form.value.department || '').trim() || null,
-      po_created_by: (form.value.po_created_by || '').trim() || null,
-      date_transfer: form.value.date_transfer || null,
-      option_name: (form.value.option_name || '').trim() || null,
-      total_price: form.value.total_price === null || form.value.total_price === '' ? null : Number(form.value.total_price),
-      currency_name: (form.value.currency_name || '').trim() || 'LAK',
-      ap_status: (form.value.ap_status || '').trim() || null,
-      qty_received: form.value.qty_received === null || form.value.qty_received === '' ? null : Number(form.value.qty_received),
-      desired_date: form.value.desired_date || null,
-      remark: (form.value.remark || '').trim() || null,
-      _qty_auto_preview: qtyAutoPreview.value,
+    if (apInfo.value) {
+      const payload = {
+        ap_number: (form.value.ap_number || '').trim() || null,
+        po_id: (form.value.po_id || '').trim() || null,
+        po_date: form.value.po_date || null,
+        supplier_name: (form.value.supplier_name || '').trim() || null,
+        item_ref: (form.value.item_ref || '').trim() || null,
+        qty_order: form.value.qty_order === null || form.value.qty_order === '' ? null : Number(form.value.qty_order),
+        department: (form.value.department || '').trim() || null,
+        po_created_by: (form.value.po_created_by || '').trim() || null,
+        date_transfer: form.value.date_transfer || null,
+        option_name: (form.value.option_name || '').trim() || null,
+        total_price: form.value.total_price === null || form.value.total_price === '' ? null : Number(form.value.total_price),
+        currency_name: (form.value.currency_name || '').trim() || 'LAK',
+        ap_status: 'ยังไม่ชำระ', // Default to unpaid when pulling from PO
+        option_name: '', // Set to empty string
+        qty_received: form.value.qty_received === null || form.value.qty_received === '' ? null : Number(form.value.qty_received),
+        desired_date: form.value.desired_date || null,
+        remark: (form.value.remark || '').trim() || null,
+        _qty_auto_preview: qtyAutoPreview.value,
+      }
+      rows.value = [{ _tmp_id: crypto.randomUUID(), ...payload }, ...(rows.value || [])]
     }
-    rows.value = [{ _tmp_id: crypto.randomUUID(), ...payload }, ...(rows.value || [])]
   }
 
   resetForm(false)
   showAddedTable.value = true
   await nextTick()
   scrollToAddedTable()
+  ui.showToast('โหลดข้อมูลสำเร็จ', 'success')
 }
 
 function formatNumber(value) {
@@ -525,7 +507,8 @@ async function addRow() {
     option_name: (form.value.option_name || '').trim() || null,
     total_price: form.value.total_price === null || form.value.total_price === '' ? null : Number(form.value.total_price),
     currency_name: (form.value.currency_name || '').trim() || 'LAK',
-    ap_status: (form.value.ap_status || '').trim() || null,
+    ap_status: (form.value.ap_status || '').trim() || 'ยังไม่ชำระ', // Default to unpaid when adding
+    option_name: (form.value.option_name || '').trim() || '', // Initial to empty
     qty_received: form.value.qty_received === null || form.value.qty_received === '' ? null : Number(form.value.qty_received),
     desired_date: form.value.desired_date || null,
     remark: (form.value.remark || '').trim() || null,
@@ -533,14 +516,12 @@ async function addRow() {
   }
 
   if (editingTmpId.value) {
-    // แก้ไขรายการเดิม
     const index = rows.value.findIndex(r => r._tmp_id === editingTmpId.value)
     if (index !== -1) {
       rows.value[index] = { ...rows.value[index], ...payload }
     }
     editingTmpId.value = null
   } else {
-    // เพิ่มรายการใหม่
     rows.value = [{ _tmp_id: crypto.randomUUID(), ...payload }, ...(rows.value || [])]
   }
 
@@ -571,7 +552,6 @@ function editTmpRow(row) {
     remark: row.remark || '',
   }
   apSearchText.value = form.value.ap_number
-  // เลื่อนไปที่ฟอร์มด้านบน
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -583,29 +563,31 @@ function cancelTmpEdit() {
 function bulkUpdateCurrency(newCurrency) {
   if (!newCurrency) return
   if (!rows.value || rows.value.length === 0) return
-  
-  // อัปเดตทุกรายการในตารางชั่วคราว
   rows.value = rows.value.map(r => ({
     ...r,
     currency_name: newCurrency
   }))
-  
-  // อัปเดตในฟอร์มด้วยเพื่อให้ตรงกัน
   form.value.currency_name = newCurrency
 }
 
 function bulkUpdateUrgency(newUrgency) {
   if (!newUrgency) return
   if (!rows.value || rows.value.length === 0) return
-  
-  // อัปเดตทุกรายการในตารางชั่วคราว
   rows.value = rows.value.map(r => ({
     ...r,
     option_name: newUrgency
   }))
-  
-  // อัปเดตในฟอร์มด้วยเพื่อให้ตรงกัน
   form.value.option_name = newUrgency
+}
+
+function bulkUpdateStatus(newStatus) {
+  if (!newStatus) return
+  if (!rows.value || rows.value.length === 0) return
+  rows.value = rows.value.map(r => ({
+    ...r,
+    ap_status: newStatus
+  }))
+  form.value.ap_status = newStatus
 }
 
 function clearRows() {
@@ -634,7 +616,7 @@ async function startEdit(id) {
   editLoading.value = true
   try {
     const { data, error } = await supabase
-      .from('ap_requests')
+      .from('exp_requests')
       .select(
         'id, ap_number, po_id, po_date, supplier_name, item_ref, qty_order, department, po_created_by, date_transfer, option_name, total_price, currency_name, ap_status, qty_received, desired_date, remark'
       )
@@ -698,7 +680,7 @@ async function submitEdit() {
       updated_at: new Date().toISOString(),
     }
 
-    const { error } = await supabase.from('ap_requests').update(payload).eq('id', editRowId.value)
+    const { error } = await supabase.from('exp_requests').update(payload).eq('id', editRowId.value)
     if (error) throw error
 
     editMode.value = false
@@ -752,7 +734,7 @@ async function submitAll() {
       updated_at: new Date().toISOString(),
     }))
 
-    const { error } = await supabase.from('ap_requests').insert(payload)
+    const { error } = await supabase.from('exp_requests').insert(payload)
     if (error) throw error
 
     rows.value = []
@@ -790,7 +772,7 @@ watch(
         <div class="md:col-span-3 flex items-center justify-between">
           <div>
             <h1 class="text-[20px] font-semibold flex items-center gap-2" style="color: var(--color-text-primary)">
-              ฟอมร์ส่งรายการ
+              ฟอมร์ส่งรายการ Exp
               <span
                 v-if="editMode"
                 class="px-2 py-0.5 rounded-full text-[11px] font-medium border"
@@ -807,7 +789,7 @@ watch(
               </span>
               <span v-if="editLoading" class="text-[12px] font-normal" style="color: var(--color-text-muted)">กำลังโหลด...</span>
             </h1>
-            <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">บันทึกข้อมูลจากตาราง ap_requests</p>
+            <p class="text-[13px] mt-0.5" style="color: var(--color-text-muted)">บันทึกข้อมูลจากตาราง exp_requests</p>
           </div>
         </div>
       </div>
@@ -816,7 +798,7 @@ watch(
     <div class="rounded-xl border p-4 md:p-6" style="background: var(--color-bg-card); border-color: var(--color-border)">
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div>
-          <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">เลขที่ AP</label>
+          <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">เลขที่ AP (Exp)</label>
           <div class="relative">
             <input
               v-model="apSearchText"
@@ -892,7 +874,7 @@ watch(
           style="border-color: var(--color-border); color: var(--color-text-primary); background: var(--color-bg-card)"
         >
           <i class="fa-solid fa-table-list" style="color: var(--color-text-muted)"></i>
-          ข้อมูลรายละเอียด
+          ข้อมูลรายละเอียด Exp
         </div>
 
         <div class="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -998,50 +980,52 @@ watch(
                   style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
                 >
                   <option value="">— เลือก —</option>
-                  <option v-for="status in availableApStatuses" :key="status" :value="status">
-                    {{ status }}
-                  </option>
+                  <option value="ยังไม่ชำระ">ยังไม่ชำระ</option>
+                  <option value="ชำระแล้ว">ชำระแล้ว</option>
+                  <option v-for="st in availableApStatuses" :key="st" :value="st">{{ st }}</option>
                 </select>
               </div>
               <div>
-                <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">ราคารวม</label>
+                <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">ราคาทั้งหมด</label>
+                <div class="relative">
+                  <input
+                    v-model="form.total_price"
+                    type="number"
+                    step="any"
+                    class="w-full mt-1 px-3 py-2 border rounded-md text-[13px] focus:outline-none focus:ring-1"
+                    style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
+                  />
+                  <div class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold" style="color: var(--color-text-muted)">
+                    {{ form.currency_name || 'LAK' }}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">สกุลเงิน</label>
+                <select
+                  v-model="form.currency_name"
+                  class="w-full mt-1 px-3 py-2 border rounded-md text-[13px] focus:outline-none focus:ring-1"
+                  style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
+                >
+                  <option value="LAK">LAK</option>
+                  <option value="THB">THB</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">วันที่ต้องการสินค้า</label>
                 <input
-                  v-model="form.total_price"
-                  type="number"
-                  step="any"
+                  v-model="form.desired_date"
+                  type="date"
                   class="w-full mt-1 px-3 py-2 border rounded-md text-[13px] focus:outline-none focus:ring-1"
                   style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
                 />
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:col-span-3">
-                <div>
-                  <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">สกุลเงิน</label>
-                  <select
-                    v-model="form.currency_name"
-                    class="w-full mt-1 px-3 py-2 border rounded-md text-[13px] focus:outline-none focus:ring-1"
-                    style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
-                  >
-                    <option value="">— เลือก —</option>
-                    <option value="THB">THB</option>
-                    <option value="LAK">LAK</option>
-                    <option value="USD">USD</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">วันที่ต้องการของ</label>
-                  <input
-                    v-model="form.desired_date"
-                    type="date"
-                    class="w-full mt-1 px-3 py-2 border rounded-md text-[13px] focus:outline-none focus:ring-1"
-                    style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
-                  />
-                </div>
-              </div>
               <div class="md:col-span-3">
-                <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">เหตุผลที่ต้องการ</label>
+                <label class="text-[12px] font-medium" style="color: var(--color-text-muted)">หมายเหตุ</label>
                 <textarea
                   v-model="form.remark"
-                  rows="3"
+                  rows="2"
                   class="w-full mt-1 px-3 py-2 border rounded-md text-[13px] focus:outline-none focus:ring-1"
                   style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
                 ></textarea>
@@ -1050,274 +1034,175 @@ watch(
           </div>
         </div>
 
-        <div class="px-4 pb-4 flex flex-col md:flex-row md:items-center gap-2">
-          <div v-if="editMode" class="w-full flex flex-col md:flex-row md:items-center gap-2">
+        <div class="px-4 py-3 border-t flex items-center justify-end gap-3" style="border-color: var(--color-border)">
+          <template v-if="editMode">
             <button
-              type="button"
-              class="px-4 py-2 rounded-md border text-[13px] font-medium inline-flex items-center gap-2"
-              style="border-color: #f97316; color: #f97316; background: var(--color-bg-card)"
-              :disabled="saving || editLoading"
-              @click="submitEdit"
-            >
-              <i class="fa-solid fa-floppy-disk"></i>
-              {{ saving ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข' }}
-            </button>
-            <button
-              type="button"
-              class="px-4 py-2 rounded-md border text-[13px] font-medium inline-flex items-center gap-2"
-              style="border-color: var(--color-border); color: var(--color-text-secondary); background: var(--color-bg-card)"
-              :disabled="saving || editLoading"
               @click="cancelEdit"
+              class="px-4 py-2 rounded-md text-[13px] font-medium border transition-colors"
+              style="border-color: var(--color-border); color: var(--color-text-muted)"
             >
-              <i class="fa-solid fa-arrow-left"></i>
-              กลับไปตารางติดตาม
-            </button>
-          </div>
-          <div v-else-if="editingTmpId" class="w-full flex flex-col md:flex-row md:items-center gap-2">
-            <button
-              type="button"
-              class="px-4 py-2 rounded-md border text-[13px] font-medium inline-flex items-center gap-2"
-              style="border-color: #8b5cf6; color: #7c3aed; background: var(--color-bg-card)"
-              @click="addRow"
-            >
-              <i class="fa-solid fa-check"></i>
-              อัปเดตรายการ
+              ยกเลิกแก้ไข
             </button>
             <button
-              type="button"
-              class="px-4 py-2 rounded-md border text-[13px] font-medium inline-flex items-center gap-2"
-              style="border-color: var(--color-border); color: var(--color-text-secondary); background: var(--color-bg-card)"
+              @click="submitEdit"
+              :disabled="saving"
+              class="px-4 py-2 rounded-md text-[13px] font-medium text-white transition-opacity bg-blue-600 hover:bg-blue-700"
+            >
+              <i v-if="saving" class="fa-solid fa-spinner fa-spin mr-1"></i>
+              บันทึกการแก้ไข
+            </button>
+          </template>
+          <template v-else>
+            <button
+              v-if="editingTmpId"
               @click="cancelTmpEdit"
+              class="px-4 py-2 rounded-md text-[13px] font-medium border transition-colors"
+              style="border-color: var(--color-border); color: var(--color-text-muted)"
             >
-              <i class="fa-solid fa-xmark"></i>
               ยกเลิกการแก้ไข
             </button>
-          </div>
-          <button
-            v-else
-            type="button"
-            class="px-4 py-2 rounded-md border text-[13px] font-medium inline-flex items-center gap-2"
-            style="border-color: #8b5cf6; color: #7c3aed; background: var(--color-bg-card)"
-            @click="addRow"
-          >
-            <i class="fa-solid fa-plus"></i>
-            เพิ่มรายการ
-          </button>
-          <button
-            v-if="!editMode"
-            type="button"
-            class="px-4 py-2 rounded-md border text-[13px] font-medium inline-flex items-center gap-2"
-            style="border-color: #ef4444; color: #ef4444; background: var(--color-bg-card)"
-            @click="clearRows"
-          >
-            <i class="fa-solid fa-trash-can"></i>
-            ล้างรายการ
-          </button>
-          <div v-if="!editMode" class="md:ml-auto flex items-center gap-2">
-            <div class="text-[12px]" style="color: var(--color-text-muted)">รายการทั้งหมด {{ (rows || []).length }} รายการ</div>
             <button
-              type="button"
-              class="px-5 py-2 rounded-full text-[13px] font-medium border inline-flex items-center gap-2"
-              style="border-color: #22c55e; color: #16a34a; background: var(--color-bg-card)"
-              :disabled="saving"
-              @click="submitAll"
+              @click="addRow"
+              class="px-4 py-2 rounded-md text-[13px] font-medium text-white transition-opacity bg-blue-600 hover:bg-blue-700"
             >
-              <i class="fa-solid fa-floppy-disk"></i>
-              {{ saving ? 'กำลังบันทึก...' : 'บันทึกข้อมูล' }}
+              <i class="fa-solid fa-plus mr-1"></i>
+              {{ editingTmpId ? 'อัปเดตรายการ' : 'เพิ่มรายการลงตาราง' }}
             </button>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- ตารางรายการที่เตรียมบันทึก -->
+    <div v-if="showAddedTable && !editMode" ref="addedTableRef" class="mt-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-[16px] font-semibold" style="color: var(--color-text-primary)">
+          รายการที่เตรียมบันทึก ({{ (rows || []).length }} รายการ)
+        </h2>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 border rounded-lg p-1 bg-white dark:bg-gray-800">
+             <span class="text-[11px] px-2 text-gray-500">ปรับทั้งหมด:</span>
+             <select 
+               class="px-2 py-1 text-[11px] border rounded bg-transparent focus:outline-none"
+               @change="bulkUpdateUrgency($event.target.value)"
+             >
+               <option value="">— ความเร่งด่วน —</option>
+               <option v-for="opt in urgentOptions" :key="opt" :value="opt">{{ opt }}</option>
+             </select>
+             <select 
+               class="px-2 py-1 text-[11px] border rounded bg-transparent focus:outline-none"
+               @change="bulkUpdateStatus($event.target.value)"
+             >
+               <option value="">— สถานะ —</option>
+               <option value="ยังไม่ชำระ">ยังไม่ชำระ</option>
+               <option value="ชำระแล้ว">ชำระแล้ว</option>
+             </select>
+             <div class="h-4 w-[1px] bg-gray-300 mx-1"></div>
+             <button @click="bulkUpdateCurrency('LAK')" class="px-2 py-1 text-[11px] rounded hover:bg-gray-100 dark:hover:bg-gray-700">LAK</button>
+             <button @click="bulkUpdateCurrency('THB')" class="px-2 py-1 text-[11px] rounded hover:bg-gray-100 dark:hover:bg-gray-700">THB</button>
+             <button @click="bulkUpdateCurrency('USD')" class="px-2 py-1 text-[11px] rounded hover:bg-gray-100 dark:hover:bg-gray-700">USD</button>
           </div>
+          <button
+            @click="clearRows"
+            class="text-[12px] font-medium text-red-500 hover:underline"
+          >
+            ล้างทั้งหมด
+          </button>
         </div>
       </div>
 
-      <div ref="addedTableRef" class="mt-4 rounded-lg border overflow-hidden" style="border-color: var(--color-border); background: var(--color-bg-card)">
-        <button
-          type="button"
-          class="w-full px-4 py-2 border-b text-[13px] font-medium flex flex-col md:flex-row md:items-center gap-2"
-          style="border-color: var(--color-border); color: var(--color-text-primary)"
-        >
-          <div class="flex items-center gap-2 flex-1" @click="showAddedTable = !showAddedTable">
-            <i class="fa-solid fa-list" style="color: var(--color-text-muted)"></i>
-            <span>รายการที่เพิ่ม</span>
-            <span class="text-[12px] font-normal" style="color: var(--color-text-muted)">({{ (rows || []).length }} รายการ)</span>
-            <i class="fa-solid fa-chevron-down ml-auto transition-transform duration-200" :class="showAddedTable ? 'rotate-180' : ''" style="color: var(--color-text-muted)"></i>
-          </div>
-
-          <!-- Bulk Selectors -->
-          <div v-if="rows.length > 0" class="flex flex-wrap items-center gap-4 ml-auto" @click.stop>
-            <!-- Bulk Urgency -->
-            <div class="flex items-center gap-2">
-              <span class="text-[11px] font-normal" style="color: var(--color-text-muted)">เปลี่ยนความเร่งด่วนทั้งหมด:</span>
-              <select
-                :value="form.option_name"
-                class="px-2 py-1 border rounded text-[11px] focus:outline-none"
-                style="border-color: var(--color-border); background: var(--color-bg-body); color: var(--color-text-primary)"
-                @change="bulkUpdateUrgency($event.target.value)"
-              >
-                <option value="">— เลือก —</option>
-                <option v-for="opt in urgentOptions" :key="opt" :value="opt">{{ opt }}</option>
-              </select>
-            </div>
-
-            <!-- Bulk Currency -->
-            <div class="flex items-center gap-2">
-              <span class="text-[11px] font-normal" style="color: var(--color-text-muted)">เปลี่ยนสกุลเงินทั้งหมด:</span>
-              <select
-                :value="form.currency_name"
-                class="px-2 py-1 border rounded text-[11px] focus:outline-none"
-                style="border-color: var(--color-border); background: var(--color-bg-body); color: var(--color-text-primary)"
-                @change="bulkUpdateCurrency($event.target.value)"
-              >
-                <option value="">— เลือก —</option>
-                <option value="THB">THB</option>
-                <option value="LAK">LAK</option>
-                <option value="USD">USD</option>
-              </select>
-            </div>
-          </div>
-        </button>
-        <div v-if="showAddedTable" class="overflow-x-auto">
-          <table class="w-full text-[12px] min-w-[1500px] border-collapse" style="border: 1px solid var(--color-border)">
-            <thead>
-              <tr style="background: #FDBA74; border-bottom: 1px solid rgba(0, 0, 0, 0.08)">
-                <th class="w-[56px] px-3 py-2 text-center font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)"></th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">AP / PO</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">ผู้ขาย</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">รายการ / อะไหล่</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">จำนวน</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">ความเร่งด่วน</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">แผนก</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">สถานะ</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">ยอดเงิน</th>
-                <th class="px-3 py-2 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">จัดการ</th>
+      <div class="rounded-xl border overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
+        <div class="overflow-x-auto overflow-y-auto max-h-[500px]">
+          <table class="w-full text-left text-[13px] table-fixed min-w-[1400px]">
+            <thead class="sticky top-0 z-10" style="background: var(--color-bg-card); border-bottom: 1px solid var(--color-border)">
+              <tr>
+                <th class="p-3 w-12 text-center">#</th>
+                <th class="p-3 w-40">เลขที่ AP / PO</th>
+                <th class="p-3 w-60">รายการ</th>
+                <th class="p-3 w-32">จำนวนสั่ง</th>
+                <th class="p-3 w-32">ราคาทั้งหมด</th>
+                <th class="p-3 w-40">แผนก</th>
+                <th class="p-3 w-40">ความเร่งด่วน</th>
+                <th class="p-3 w-40">สถานะ</th>
+                <th class="p-3 w-28 text-center">จัดการ</th>
               </tr>
             </thead>
-            <tbody>
-              <template v-for="(r, idx) in rows" :key="r._tmp_id">
-              <tr class="hover:bg-gray-50 dark:hover:bg-slate-700/30 transition-colors" style="border-bottom: 1px solid var(--color-border)">
-                <td class="px-3 py-2 text-center" style="border-right: 1px solid var(--color-border)">
-                  <button
-                    type="button"
-                    class="w-9 h-9 inline-flex items-center justify-center rounded-md border hover:bg-gray-50 transition-colors"
-                    :class="isRowExpanded(r._tmp_id) ? 'text-red-600 border-red-300' : 'text-gray-800 border-gray-300'"
-                    style="background: var(--color-bg-body)"
-                    :title="isRowExpanded(r._tmp_id) ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'"
-                    @click="toggleRowExpanded(r._tmp_id)"
-                  >
-                    <i class="fa-solid text-[18px]" :class="isRowExpanded(r._tmp_id) ? 'fa-minus' : 'fa-plus'"></i>
-                  </button>
+            <tbody class="divide-y" style="border-color: var(--color-border)">
+              <tr v-for="(row, idx) in rows" :key="row._tmp_id" class="hover:bg-gray-50/50 transition-colors">
+                <td class="p-3 text-center text-gray-400">{{ rows.length - idx }}</td>
+                <td class="p-3">
+                  <div class="font-medium" style="color: var(--color-text-primary)">{{ row.ap_number || '-' }}</div>
+                  <div class="text-[11px]" style="color: var(--color-text-muted)">PO: {{ row.po_id || '-' }}</div>
                 </td>
-                <td class="px-3 py-2 whitespace-nowrap" style="border-right: 1px solid var(--color-border)">
-                  <div class="font-semibold" style="color: #2563eb">AP: {{ r.ap_number || '-' }}</div>
-                  <div class="font-medium" style="color: var(--color-text-primary)">PO: {{ r.po_id || '-' }}</div>
-                  <div class="text-[11px]" style="color: var(--color-text-muted)">เปิด PO: {{ formatThaiDate(r.po_date) }}</div>
-                </td>
-                <td class="px-3 py-2" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.supplier_name || '-' }}</td>
-                <td class="px-3 py-2" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">
-                  <div
-                    :title="r.item_ref || ''"
-                    style="white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden"
-                  >
-                    {{ r.item_ref || '-' }}
+                <td class="p-3">
+                  <div class="truncate font-medium" style="color: var(--color-text-primary)" :title="row.item_ref">
+                    {{ row.item_ref || '-' }}
+                  </div>
+                  <div class="text-[11px]" style="color: var(--color-text-muted)">
+                    โดย: {{ row.po_created_by || '-' }}
                   </div>
                 </td>
-                <td class="px-3 py-2 whitespace-nowrap" style="border-right: 1px solid var(--color-border)">
-                  <div style="color: var(--color-text-primary)">{{ formatNumber(r.qty_order) }}</div>
-                  <div class="text-[11px]" style="color: var(--color-text-muted)">รับแล้ว: {{ formatNumber(r.qty_received) }} • ค้าง: {{ formatNumber(r._qty_auto_preview) }}</div>
-                </td>
-                <td class="px-3 py-2 whitespace-nowrap" style="border-right: 1px solid var(--color-border)">
-                  <span class="px-2 py-0.5 rounded-full text-[11px] font-medium border" style="border-color: rgba(239, 68, 68, 0.35); color: #ef4444">
-                    {{ r.option_name || '-' }}
-                  </span>
-                </td>
-                <td class="px-3 py-2 whitespace-nowrap" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.department || '-' }}</td>
-                <td class="px-3 py-2 whitespace-nowrap" style="border-right: 1px solid var(--color-border)">
-                  <span class="px-2 py-0.5 rounded-full text-[11px] font-medium border" style="border-color: rgba(37, 99, 235, 0.25); color: #2563eb">
-                    {{ r.ap_status || '-' }}
-                  </span>
-                </td>
-                <td class="px-3 py-2 whitespace-nowrap" style="border-right: 1px solid var(--color-border)">
-                  <div class="font-semibold" style="color: var(--color-text-primary)">
-                    {{ formatNumber(r.total_price) }}
-                    <select
-                      :value="String(r.currency_name || 'LAK').toUpperCase()"
-                      @change="(e) => {
-                        const newCur = e.target.value;
-                        r.currency_name = newCur;
-                        // อัปเดตใน rows เพื่อให้ UI รีเฟรช
-                        rows = [...rows];
-                      }"
-                      class="ml-1 bg-transparent border-none p-0 font-bold text-blue-600 focus:ring-0 cursor-pointer hover:underline uppercase"
-                      title="คลิกเพื่อเปลี่ยนสกุลเงิน"
-                    >
-                      <option value="LAK">LAK</option>
-                      <option value="THB">THB</option>
-                      <option value="USD">USD</option>
-                    </select>
+                <td class="p-3">
+                  <div class="font-bold" style="color: var(--color-text-primary)">
+                    {{ formatNumber(row.qty_order) }}
                   </div>
-                  <div class="text-[11px]" style="color: var(--color-text-muted)">รับแล้ว: {{ formatNumber(r.amount_received) }} • คงเหลือ: {{ formatNumber(r.amount_balance) }}</div>
                 </td>
-                <td class="px-3 py-2 whitespace-nowrap" style="color: var(--color-text-primary)">
-                  <div class="flex items-center gap-1">
-                    <button
-                      type="button"
-                      class="w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors text-blue-600 dark:text-blue-300"
-                      title="แก้ไขแถวนี้"
-                      @click="editTmpRow(r)"
-                    >
+                <td class="p-3">
+                  <div class="font-bold text-blue-600">
+                    {{ formatNumber(row.total_price) }} <span class="text-[10px]">{{ row.currency_name }}</span>
+                  </div>
+                </td>
+                <td class="p-3">
+                  <span class="px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-[11px]">
+                    {{ row.department || '-' }}
+                  </span>
+                </td>
+                <td class="p-3">
+                  <span 
+                    class="px-2 py-0.5 rounded text-[11px] border"
+                    :style="row.option_name?.includes('ด่วน') ? 'background: #fef2f2; color: #ef4444; border-color: #fecaca' : 'background: #f0fdf4; color: #22c55e; border-color: #bbf7d0'"
+                  >
+                    {{ row.option_name || '-' }}
+                  </span>
+                </td>
+                <td class="p-3">
+                   <span 
+                    class="px-2 py-0.5 rounded text-[11px]"
+                    :class="row.ap_status === 'ชำระแล้ว' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'"
+                  >
+                    {{ row.ap_status || '-' }}
+                  </span>
+                </td>
+                <td class="p-3 text-center">
+                  <div class="flex items-center justify-center gap-2">
+                    <button @click="editTmpRow(row)" class="p-1.5 rounded hover:bg-blue-50 text-blue-600 transition-colors" title="แก้ไข">
                       <i class="fa-solid fa-pen-to-square"></i>
                     </button>
-                    <button
-                      type="button"
-                      class="w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors text-red-600 dark:text-red-300"
-                      title="ลบแถวนี้"
-                      @click="removeRow(r._tmp_id)"
-                    >
+                    <button @click="removeRow(row._tmp_id)" class="p-1.5 rounded hover:bg-red-50 text-red-500 transition-colors" title="ลบ">
                       <i class="fa-solid fa-trash-can"></i>
                     </button>
-                    <div class="text-[11px]" style="color: var(--color-text-muted)">#{{ rows.length - idx }}</div>
                   </div>
                 </td>
-              </tr>
-              <tr v-if="isRowExpanded(r._tmp_id)" style="border-bottom: 1px solid var(--color-border)">
-                <td colspan="10" class="px-3 py-3" style="background: var(--color-bg-body)">
-                  <div class="rounded-lg border p-4" style="border-color: var(--color-border); background: var(--color-bg-card)">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-[12px]">
-                      <div>
-                        <div style="color: var(--color-text-muted)">วันที่โอนเงิน (แผน)</div>
-                        <div class="font-medium" style="color: var(--color-text-primary)">{{ formatThaiDate(r.date_transfer) }}</div>
-                      </div>
-                      <div>
-                        <div style="color: var(--color-text-muted)">วันที่ต้องการของ</div>
-                        <div class="font-medium" style="color: var(--color-text-primary)">{{ formatThaiDate(r.desired_date) }}</div>
-                      </div>
-                      <div>
-                        <div style="color: var(--color-text-muted)">คนเปิด PO</div>
-                        <div class="font-medium" style="color: var(--color-text-primary)">{{ r.po_created_by || '-' }}</div>
-                      </div>
-                      <div class="md:col-span-3">
-                        <div style="color: var(--color-text-muted)">เหตุผลที่ต้องการ</div>
-                        <div class="font-medium" style="color: var(--color-text-primary); white-space: pre-line">{{ r.remark || '-' }}</div>
-                      </div>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-              </template>
-              <tr v-if="!(rows || []).length">
-                <td colspan="10" class="px-4 py-10 text-center" style="color: var(--color-text-muted)">ยังไม่มีรายการ</td>
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="px-6 py-4 border-t flex items-center justify-between" style="border-color: var(--color-border); background: var(--color-bg-card)">
+          <p class="text-[12px]" style="color: var(--color-text-muted)">
+            * ตรวจสอบข้อมูลให้ถูกต้องก่อนบันทึกลงฐานข้อมูล
+          </p>
+          <button
+            @click="submitAll"
+            :disabled="saving"
+            class="px-8 py-2.5 rounded-lg text-[14px] font-bold text-white shadow-lg transition-all hover:scale-105 active:scale-95 bg-blue-600 hover:bg-blue-700"
+          >
+            <i v-if="saving" class="fa-solid fa-spinner fa-spin mr-2"></i>
+            <i v-else class="fa-solid fa-cloud-arrow-up mr-2"></i>
+            บันทึกข้อมูลทั้งหมด ({{ rows.length }} รายการ)
+          </button>
         </div>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-input:focus,
-textarea:focus {
-  border-color: var(--color-primary) !important;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
-}
-</style>

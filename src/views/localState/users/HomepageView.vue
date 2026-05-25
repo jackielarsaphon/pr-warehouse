@@ -363,9 +363,9 @@ const totalAmount = () => modalItems.value.reduce((sum, item) => sum + (Number(i
           <router-link to="/u/create" class="hero-btn">
             + สร้างคำขอเบิก
           </router-link>
-          <router-link to="/u/create-pr" class="hero-btn !bg-blue-600 !text-white">
+          <!-- <router-link to="/u/create-pr" class="hero-btn !bg-blue-600 !text-white">
             + สร้างคำขอ PR
-          </router-link>
+          </router-link> -->
         </div>
       </section>
 
@@ -380,12 +380,12 @@ const totalAmount = () => modalItems.value.reduce((sum, item) => sum + (Number(i
             รายการคำขอเบิกพัสดุ
             <div v-if="mainTab === 'withdraw'" class="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-full"></div>
           </button>
-          <button @click="mainTab = 'pr'" 
+          <!-- <button @click="mainTab = 'pr'" 
                   class="pb-3 px-4 text-[15px] font-bold transition-all relative"
                   :class="mainTab === 'pr' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'">
             รายการเปิด PR
             <div v-if="mainTab === 'pr'" class="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-full"></div>
-          </button>
+          </button> -->
         </div>
 
         <div class="section-title mb-4">

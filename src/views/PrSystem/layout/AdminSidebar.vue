@@ -15,7 +15,8 @@ const auth = useAuthStore()
 const collapsed = ref(false)
 const systemAdminsOpen = ref(false)
 const prListOpen = ref(false)
-const formSubmitOpen = ref(false)
+const formExpOpen = ref(false)
+const formApOpen = ref(false)
 
 const menuItems = [
   { id: "/#/dashboard", icon: "fa-house", label: "แดชบอร์ด" },
@@ -48,14 +49,25 @@ const menuItems = [
   //   ],
   // },
   {
-    id: "/#/form_appo",
+    id: "/#/form_submit_exp",
     icon: "fa-paper-plane",
-    label: "ฟอมร์ส่งรายการ",
+    label: "ฟอมร์ส่งรายการ Exp",
     selectable: true,
     children: [
-      { id: "/#/form_tracking", icon: "fa-table-list", label: "ตรางติดตาม" },
-      { id: "/#/form_slip_match", icon: "fa-link", label: "จับคู่สลิบโอน" },
-      { id: "/#/form_line_message", icon: "fa-comment-dots", label: "ส่งข้อความ LINE" },
+      { id: "/#/form_tracking_exp", icon: "fa-list-check", label: "ตรางติดตาม Exp" },
+      { id: "/#/form_slip_exp", icon: "fa-receipt", label: "จับคู่สลิบโอน Exp" },
+      { id: "/#/form_line_exp", icon: "fa-message", label: "ส่งข้อความ LINE Exp" },
+    ],
+  },
+  {
+    id: "/#/form_submit_ap",
+    icon: "fa-file-invoice-dollar",
+    label: "ฟอมร์ส่งรายการ AP",
+    selectable: true,
+    children: [
+      { id: "/#/form_tracking_ap", icon: "fa-table-columns", label: "ตรางติดตาม AP" },
+      { id: "/#/form_slip_ap", icon: "fa-money-bill-transfer", label: "จับคู่สลิบโอน AP" },
+      { id: "/#/form_line_ap", icon: "fa-comment-sms", label: "ส่งข้อความ LINE AP" },
     ],
   },
   
@@ -70,7 +82,8 @@ watch(
     const key = (id ?? "").toString()
     if (key.includes("system_admins")) systemAdminsOpen.value = true
     if (key.includes("pr_") || key.includes("pr_list")) prListOpen.value = true
-    if (key.includes("form_") || key.includes("form_submit")) formSubmitOpen.value = true
+    if (key.includes("_exp")) formExpOpen.value = true
+    if (key.includes("_ap")) formApOpen.value = true
   },
   { immediate: true }
 )
@@ -83,8 +96,9 @@ function selectItem(item) {
 function getSectionKey(item) {
   const id = (item?.id ?? "").toString()
   if (id.includes("system_admins")) return "system_admins"
-  if (id.includes("pr_section") || id.includes("pr_list")) return "pr_list"
-  if (id.includes("form_submit") || id.includes("form_")) return "form_submit"
+  if (id.includes("pr_") || id.includes("pr_list")) return "pr_list"
+  if (id.includes("_exp")) return "form_exp"
+  if (id.includes("_ap")) return "form_ap"
   return ""
 }
 
@@ -93,7 +107,8 @@ function isSectionActive(item) {
   const section = getSectionKey(item)
   if (section === "system_admins") return activeId.includes("system_admins")
   if (section === "pr_list") return activeId.includes("pr_") || activeId.includes("pr_list")
-  if (section === "form_submit") return activeId.includes("form_") || activeId.includes("form_submit")
+  if (section === "form_exp") return activeId.includes("_exp")
+  if (section === "form_ap") return activeId.includes("_ap")
   return false
 }
 
@@ -101,7 +116,8 @@ function isSectionOpen(item) {
   const section = getSectionKey(item)
   if (section === "system_admins") return systemAdminsOpen.value
   if (section === "pr_list") return prListOpen.value
-  if (section === "form_submit") return formSubmitOpen.value
+  if (section === "form_exp") return formExpOpen.value
+  if (section === "form_ap") return formApOpen.value
   return false
 }
 
@@ -109,7 +125,8 @@ function toggleSection(item) {
   const section = getSectionKey(item)
   if (section === "system_admins") systemAdminsOpen.value = !systemAdminsOpen.value
   if (section === "pr_list") prListOpen.value = !prListOpen.value
-  if (section === "form_submit") formSubmitOpen.value = !formSubmitOpen.value
+  if (section === "form_exp") formExpOpen.value = !formExpOpen.value
+  if (section === "form_ap") formApOpen.value = !formApOpen.value
 }
 
 function onParentClick(item) {

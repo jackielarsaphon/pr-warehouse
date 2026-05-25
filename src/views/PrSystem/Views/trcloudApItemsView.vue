@@ -242,7 +242,7 @@ function sendToAppo(rows) {
   // ถ้ามีรายการเดียว ส่งเป็น string แบบเดิมเพื่อความ Backward Compatible (หรือส่งเป็น Array ก็ได้ถ้าแก้ appoView แล้ว)
   // แต่เพื่อให้ชัวร์ว่าทำงานได้หลายอัน จะส่งเป็น Array
   trcloudStore.pendingAutofill = identities
-  emit('selectPage', { itemId: "/#/form_appo", itemLabel: "ฟอร์ม AP/PO" })
+  emit('selectPage', { itemId: "/#/form_submit_ap", itemLabel: "ฟอมร์ส่งรายการ AP" })
   openMenuId.value = null
   selectedRows.value = []
 }
