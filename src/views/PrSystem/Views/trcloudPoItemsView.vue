@@ -88,19 +88,39 @@ function cleanupTrackedIds() {
   }
 }
 
-async function setTrackedCloud(docKeys, checked) {
+async function setTrackedCloud(docKeys, checked, rows = []) {
   try {
     const keys = Array.isArray(docKeys) ? docKeys : [docKeys]
+    const rowList = Array.isArray(rows) ? rows : [rows]
+
     if (checked) {
       await supabase.from(TRACK_TABLE).delete().eq('doc_type', TRACK_DOC_TYPE).in('doc_key', keys)
-      const inserts = keys.map(k => ({
-        doc_type: TRACK_DOC_TYPE,
-        doc_key: k,
-        checked: true,
-        updated_by: auth.user?.id || null
-      }))
+      const inserts = rowList.map(r => {
+        // จัดการวันที่ให้เป็นรูปแบบที่ Supabase ยอมรับ (YYYY-MM-DD) หรือ null
+        let formattedDate = r.issue_date || r.date || null
+        if (formattedDate && formattedDate.includes('/')) {
+          const [d, m, y] = formattedDate.split('/')
+          formattedDate = `${y}-${m}-${d}`
+        }
+
+        return {
+          doc_type: TRACK_DOC_TYPE,
+          doc_key: getRowIdentity(r),
+          checked: true,
+          updated_by: auth.user?.email || auth.user?.id || 'unknown',
+          doc_date: formattedDate || null,
+          partner_name: r.organization || r.partner_name || null,
+          item_description: r.item_name || r.item_description || null,
+          quantity: isNaN(parseFloat(r.quantity)) ? 0 : parseFloat(r.quantity),
+          unit_price: isNaN(parseFloat(r.price)) ? 0 : parseFloat(r.price),
+          total_amount: isNaN(parseFloat(r.item_total)) ? 0 : parseFloat(r.item_total)
+        }
+      })
       const { error: insertError } = await supabase.from(TRACK_TABLE).insert(inserts)
-      if (insertError) throw insertError
+      if (insertError) {
+        console.error('PO Track Insert Error:', insertError)
+        throw insertError
+      }
       return
     }
     const { error } = await supabase
@@ -140,7 +160,7 @@ async function toggleTracked(row, checked) {
     // หมายเหตุ: ไม่ทำการอัปเดต sortingTrackedIds ที่นี่ เพื่อให้ตำแหน่งแถวคงที่ (Frozen) ขณะใช้งาน
     
     persistTrackedRowIds()
-    await setTrackedCloud(siblingIds, true)
+    await setTrackedCloud(siblingIds, true, siblings)
   } else {
     // 2. ติ๊กออก: ให้ยกเลิกเฉพาะรายการที่กดเท่านั้น
     trackedRowIds.value = trackedRowIds.value.filter((x) => x !== currentId)
@@ -236,6 +256,43 @@ async function refreshPoItemRows() {
   await trcloudStore.fetchTrcloudData('po', { force: true })
   cleanupTrackedIds()
   sortingTrackedIds.value = [...trackedRowIds.value]
+  await autoSyncTodayData()
+}
+
+async function autoSyncTodayData() {
+  try {
+    const today = new Date().toISOString().split('T')[0] // รูปแบบ YYYY-MM-DD
+    const todayRows = trcloudStore.poItemRows.filter(row => {
+      let docDate = row.issue_date || ''
+      return docDate === today
+    })
+
+    if (todayRows.length === 0) return
+
+    const inserts = todayRows.map(r => ({
+      unique_id: getRowIdentity(r),
+      doc_number: r.doc_number || r.invoice_number || '',
+      issue_date: r.issue_date || null,
+      organization: r.organization || '',
+      item_name: r.item_name || '',
+      quantity: isNaN(parseFloat(r.quantity)) ? 0 : parseFloat(r.quantity),
+      unit: r.unit || '',
+      price: isNaN(parseFloat(r.price)) ? 0 : parseFloat(r.price),
+      item_total: isNaN(parseFloat(r.item_total)) ? 0 : parseFloat(r.item_total),
+      staff: r.staff || '',
+      currency: r.currency || 'LAK'
+    }))
+
+    // ใช้ upsert โดยอิงจาก unique_id เพื่อป้องกันข้อมูลซ้ำ
+    const { error } = await supabase
+      .from('po_items_sync')
+      .upsert(inserts, { onConflict: 'unique_id' })
+
+    if (error) throw error
+    console.log(`Auto-synced ${todayRows.length} rows for today (${today})`)
+  } catch (err) {
+    console.warn('Auto-sync today data failed:', err?.message || err)
+  }
 }
 
 function getIdentityString(row) {
@@ -325,10 +382,13 @@ watch(viewMode, () => {
   sortingTrackedIds.value = [...trackedRowIds.value]
 })
 
-onMounted(() => {
+onMounted(async () => {
   loadTrackedRowIdsFromCloud()
   if (!trcloudStore.poRows.length) {
-    refreshPoItemRows()
+    await refreshPoItemRows()
+  } else {
+    // ถ้ามีข้อมูลอยู่แล้ว ให้ลอง Sync ข้อมูลของวันนี้ด้วย
+    await autoSyncTodayData()
   }
 })
 </script>
@@ -426,7 +486,7 @@ onMounted(() => {
 
     <div class="rounded-xl border overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
       <div class="overflow-x-auto">
-        <table class="w-full text-[13px] min-w-[1310px] border-collapse table-fixed">
+        <table class="w-full text-[13px] min-w-[1460px] border-collapse table-fixed">
           <thead>
             <tr class="text-left" style="background: var(--color-bg-body); border-bottom: 1px solid var(--color-border)">
               <th class="px-4 py-3 font-medium w-[50px] text-center relative" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">
@@ -468,6 +528,7 @@ onMounted(() => {
               <th class="px-4 py-3 font-medium w-[100px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">วันที่</th>
               <th class="px-4 py-3 font-medium w-[100px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">อายุ (วัน)</th>
               <th class="px-4 py-3 font-medium w-[200px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">คู่ค้า</th>
+              <th class="px-4 py-3 font-medium w-[150px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">Staff</th>
               <th class="px-4 py-3 font-medium min-w-[200px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">รายการสินค้า / คำอธิบาย</th>
               <th class="px-4 py-3 font-medium w-[80px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">จำนวน</th>
               <th class="px-4 py-3 font-medium w-[80px]" style="color: var(--color-text-muted); border-right: 1px solid var(--color-border)">หน่วย</th>
@@ -480,7 +541,7 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="13" class="px-4 py-12 text-center">
+              <td colspan="14" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
                   <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
@@ -488,7 +549,7 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-else-if="!filteredRows.length">
-              <td colspan="14" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ PO รายการสินค้า</td>
+              <td colspan="15" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ PO รายการสินค้า</td>
             </tr>
             <tr v-for="(row, index) in filteredRows" :key="getRowIdentity(row)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 text-center relative" style="border-right: 1px solid var(--color-border)">
@@ -532,6 +593,7 @@ onMounted(() => {
                 {{ calculateAge(row.issue_date) }} วัน
               </td>
               <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary)">{{ row.organization || '-' }}</td>
+              <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary)">{{ row.staff || '-' }}</td>
               <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary)">{{ row.item_name || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.quantity || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.unit || '-' }}</td>

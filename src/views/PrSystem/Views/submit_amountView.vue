@@ -27,12 +27,12 @@ const isOutOfSync = computed(() => {
 })
 
 const staffSummary = computed(() => {
-  let rows = trcloudStore.poRows
+  let rows = trcloudStore.poItemRows
 
   // Client-side Date Filter (Instant filtering from memory)
   if (displayDateRange.value.from && displayDateRange.value.to) {
     rows = rows.filter(r => {
-      let docDate = r.issue_date || r.date || ''
+      let docDate = r.issue_date || ''
       if (!docDate) return false
       
       // Extract only YYYY-MM-DD in case there's a time string
@@ -50,7 +50,7 @@ const staffSummary = computed(() => {
 
   rows.forEach(row => {
     const staffName = row.staff || 'ไม่ระบุชื่อ'
-    const docId = row.document_number || row.po_id || row.id
+    const docId = row.doc_number || row.invoice_number || row.unique_id
     
     if (!summaryMap[staffName]) {
       summaryMap[staffName] = {
@@ -70,16 +70,16 @@ const staffSummary = computed(() => {
     if (docId && !summaryMap[staffName].uniqueDocIds.has(docId)) {
       summaryMap[staffName].uniqueDocIds.add(docId)
       
-      const hasAp = row.expense || row.ap_id || row.invoice_number?.includes('AP') || (row.status && row.status.includes('ชำระแล้ว'))
+      const hasAp = row.expense || row.status?.includes('ชำระแล้ว') || row.status?.includes('AP')
       if (hasAp) {
         summaryMap[staffName].uniqueApIds.add(docId)
       } else {
         summaryMap[staffName].uniquePoIds.add(docId)
       }
-      
-      // บวกมูลค่าเฉพาะเลขที่เอกสารที่ไม่ซ้ำ (เพื่อไม่ให้ยอดเงินเบิ้ลกรณีมีหลายรายการในเลขเดียว)
-      summaryMap[staffName].totalAmount += parseFloat(row.grand_total || 0)
     }
+    
+    // บวกมูลค่าจาก item_total เสมอสำหรับทุกแถวรายการ
+    summaryMap[staffName].totalAmount += parseFloat(row.item_total || 0)
   })
 
   return Object.values(summaryMap).map(s => ({
@@ -124,6 +124,44 @@ const staffDetails = computed(() => {
     const dateB = b.issue_date || b.date || ''
     return dateB.localeCompare(dateA)
   })
+})
+
+const expandedGroups = ref(new Set())
+
+function toggleGroup(docNumber) {
+  if (expandedGroups.value.has(docNumber)) {
+    expandedGroups.value.delete(docNumber)
+  } else {
+    expandedGroups.value.add(docNumber)
+  }
+}
+
+const groupedStaffDetails = computed(() => {
+  const details = staffDetails.value
+  const groups = []
+  const groupMap = {}
+  
+  details.forEach(item => {
+    const docNum = item.doc_number || item.invoice_number || 'N/A'
+    if (!groupMap[docNum]) {
+      groupMap[docNum] = {
+        doc_number: docNum,
+        issue_date: item.issue_date,
+        organization: item.organization,
+        project: item.project,
+        pr: item.pr,
+        status: item.status,
+        currency: item.currency || 'LAK',
+        items: [],
+        totalAmount: 0
+      }
+      groups.push(groupMap[docNum])
+    }
+    groupMap[docNum].items.push(item)
+    groupMap[docNum].totalAmount += Number(item.item_total || 0)
+  })
+  
+  return groups
 })
 
 async function fetchData() {
@@ -202,6 +240,13 @@ watch([trcloudDateFrom, trcloudDateTo], () => {
 
 function goToTankpo() {
   emit('selectPage', { itemId: '/#/tankpo', itemLabel: 'สรุปตามคนเปิด PO (แผนภูมิ)' })
+}
+
+function formatNumber(value) {
+  if (value === null || value === undefined || value === '') return '-'
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '-'
+  return n.toLocaleString('th-TH')
 }
 
 function calculateDocAge(dateStr) {
@@ -369,7 +414,7 @@ onMounted(async () => {
               </div>
               <div class="flex justify-between items-center text-[11px]">
                 <div style="color: var(--color-text-muted)">
-                  มูลค่ารวม: <span class="font-mono font-medium">{{ staff.totalAmount.toLocaleString('th-TH', {minimumFractionDigits:2}) }}</span> ฿
+                  มูลค่ารวม: <span class="font-mono font-medium">{{ staff.totalAmount.toLocaleString('th-TH', {minimumFractionDigits:2}) }}</span>
                 </div>
                 <div class="flex gap-2 text-[10px] font-medium">
                   <span class="text-orange-500">PO: {{ staff.notPassedCount }}</span>
@@ -407,39 +452,88 @@ onMounted(async () => {
           <table v-if="selectedStaff" class="w-full text-[13px] border-collapse">
             <thead class="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900" style="border-bottom: 1px solid var(--color-border)">
               <tr>
-                <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">เลขที่เอกสาร</th>
-                <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">วันที่</th>
-                <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">อายุเอกสาร</th>
-                <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">อ้างอิง PR</th>
-                <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">โครงการ</th>
-                <th class="px-4 py-3 text-right font-medium" style="color: var(--color-text-muted)">มูลค่า</th>
-                <th class="px-4 py-3 text-center font-medium" style="color: var(--color-text-muted)">สถานะ</th>
+                <th class="px-4 py-3 text-center font-medium w-10" style="color: var(--color-text-muted)"></th>
+                <th class="px-4 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลขที่เอกสาร / วันที่</th>
+                <th class="px-4 py-3 text-left font-medium" style="color: var(--color-text-muted)">โครงการ / คู่ค้า / อ้างอิง</th>
+                <th class="px-4 py-3 text-right font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ยอดรวมทั้งหมด</th>
+                <th class="px-4 py-3 text-center font-medium whitespace-nowrap" style="color: var(--color-text-muted)">สถานะ</th>
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="item in staffDetails"
-                :key="item.unique_id || item.po_id"
-                class="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
-                style="border-bottom: 1px solid var(--color-border)"
-              >
-                <td class="px-4 py-3 font-mono font-medium text-black dark:text-white">{{ item.document_number || item.po_id }}</td>
-                <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ item.issue_date || item.date }}</td>
-                <td class="px-4 py-3 font-medium text-gray-600 dark:text-gray-400">{{ calculateDocAge(item.issue_date || item.date) }}</td>
-                <td class="px-4 py-3 font-mono text-gray-500">{{ item.pr || item.reference || '-' }}</td>
-                <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ item.project || '-' }}</td>
-                <td class="px-4 py-3 text-right font-mono font-bold text-black dark:text-white">
-                  {{ Number(item.grand_total || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}
-                </td>
-                <td class="px-4 py-3 text-center">
-                  <span
-                    class="px-2 py-1 rounded-lg text-[11px] font-medium"
-                    :style="{ backgroundColor: getBadgeInfo(item.status).bg, color: getBadgeInfo(item.status).color }"
-                  >
-                    {{ getBadgeInfo(item.status).text }}
-                  </span>
-                </td>
-              </tr>
+              <template v-for="group in groupedStaffDetails" :key="group.doc_number">
+                <!-- Group Header Row -->
+                <tr
+                  class="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors cursor-pointer"
+                  style="border-bottom: 1px solid var(--color-border)"
+                  @click="toggleGroup(group.doc_number)"
+                >
+                  <td class="px-4 py-4 text-center">
+                    <button 
+                      class="w-6 h-6 rounded flex items-center justify-center transition-colors"
+                      :class="expandedGroups.has(group.doc_number) ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'"
+                    >
+                      <i :class="['fa-solid', expandedGroups.has(group.doc_number) ? 'fa-minus' : 'fa-plus', 'text-[10px]']"></i>
+                    </button>
+                  </td>
+                  <td class="px-4 py-4">
+                    <div class="font-bold text-[14px] text-blue-600 dark:text-blue-400 font-mono">{{ group.doc_number }}</div>
+                    <div class="text-[11px] text-gray-500 mt-1">{{ group.issue_date }}</div>
+                  </td>
+                  <td class="px-4 py-4">
+                    <div class="flex flex-col gap-1">
+                      <div class="flex items-center gap-2">
+                        <span class="text-orange-600 dark:text-orange-400 font-bold text-[12px]"><i class="fa-solid fa-folder-open mr-1"></i>{{ group.project || 'ไม่มีโครงการ' }}</span>
+                        <span class="text-purple-600 dark:text-purple-400 font-medium text-[12px]"><i class="fa-solid fa-file-invoice mr-1"></i>{{ group.pr || '-' }}</span>
+                      </div>
+                      <div class="text-[13px] font-medium text-gray-700 dark:text-gray-200">{{ group.organization || '-' }}</div>
+                    </div>
+                  </td>
+                  <td class="px-4 py-4 text-right">
+                    <div class="text-[15px] font-bold text-black dark:text-white font-mono">
+                      {{ group.totalAmount.toLocaleString('th-TH', {minimumFractionDigits:2}) }}
+                    </div>
+                    <div class="text-[10px] text-gray-400 uppercase">{{ group.currency }}</div>
+                  </td>
+                  <td class="px-4 py-4 text-center">
+                    <span
+                      class="px-3 py-1.5 rounded-lg text-[11px] font-bold"
+                      :style="{ backgroundColor: getBadgeInfo(group.status).bg, color: getBadgeInfo(group.status).color }"
+                    >
+                      {{ getBadgeInfo(group.status).text }}
+                    </span>
+                  </td>
+                </tr>
+
+                <!-- Group Details Row (Expandable) -->
+                <tr v-if="expandedGroups.has(group.doc_number)" class="bg-gray-50/50 dark:bg-gray-900/20">
+                  <td colspan="5" class="px-8 py-4">
+                    <div class="rounded-lg border overflow-hidden shadow-sm" style="border-color: var(--color-border)">
+                      <table class="w-full text-[12px]">
+                        <thead class="bg-red-500 text-white">
+                          <tr>
+                            <th class="px-4 py-2 text-left font-medium">ลำดับ</th>
+                            <th class="px-4 py-2 text-left font-medium">รายการสินค้า / คำอธิบาย</th>
+                            <th class="px-4 py-2 text-center font-medium">จำนวน</th>
+                            <th class="px-4 py-2 text-right font-medium">ราคา/หน่วย</th>
+                            <th class="px-4 py-2 text-right font-medium">ยอดรวม ({{ group.currency }})</th>
+                          </tr>
+                        </thead>
+                        <tbody class="bg-white dark:bg-gray-800">
+                          <tr v-for="(item, index) in group.items" :key="item.unique_id" class="border-b last:border-0" style="border-color: var(--color-border)">
+                            <td class="px-4 py-2 text-gray-500 font-mono">{{ index + 1 }}</td>
+                            <td class="px-4 py-2 font-medium">{{ item.item_name || '-' }}</td>
+                            <td class="px-4 py-2 text-center font-mono">{{ formatNumber(item.quantity) }}</td>
+                            <td class="px-4 py-2 text-right font-mono">{{ formatNumber(item.price) }}</td>
+                            <td class="px-4 py-2 text-right font-bold font-mono text-black dark:text-white">
+                              {{ Number(item.item_total || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
           <div v-else class="h-full flex flex-col items-center justify-center p-12 text-center" style="color: var(--color-text-muted)">

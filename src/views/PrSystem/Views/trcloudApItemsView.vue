@@ -87,22 +87,42 @@ function cleanupTrackedIds() {
   }
 }
 
-async function setTrackedCloud(docKeys, checked) {
+async function setTrackedCloud(docKeys, checked, rows = []) {
   try {
     const keys = Array.isArray(docKeys) ? docKeys : [docKeys]
+    const rowList = Array.isArray(rows) ? rows : [rows]
+    
     if (checked) {
-      // ลบของเก่าออกก่อนเพื่อป้องกัน Duplicate (ถ้ามี)
+      // ลบของเก่าออกก่อนเพื่อป้องกัน Duplicate
       await supabase.from(TRACK_TABLE).delete().eq('doc_type', TRACK_DOC_TYPE).in('doc_key', keys)
       
-      const inserts = keys.map(k => ({
-        doc_type: TRACK_DOC_TYPE,
-        doc_key: k,
-        checked: true,
-        updated_by: auth.user?.id || null
-      }))
+      const inserts = rowList.map(r => {
+        // จัดการวันที่ให้เป็นรูปแบบที่ Supabase ยอมรับ (YYYY-MM-DD) หรือ null
+        let formattedDate = r.issue_date || r.date || null
+        if (formattedDate && formattedDate.includes('/')) {
+          const [d, m, y] = formattedDate.split('/')
+          formattedDate = `${y}-${m}-${d}`
+        }
+
+        return {
+          doc_type: TRACK_DOC_TYPE,
+          doc_key: getRowIdentity(r),
+          checked: true,
+          updated_by: auth.user?.email || auth.user?.id || 'unknown',
+          doc_date: formattedDate || null,
+          partner_name: r.organization || r.partner_name || null,
+          item_description: r.item_name || r.item_description || null,
+          quantity: isNaN(parseFloat(r.quantity)) ? 0 : parseFloat(r.quantity),
+          unit_price: isNaN(parseFloat(r.price)) ? 0 : parseFloat(r.price),
+          total_amount: isNaN(parseFloat(r.item_total)) ? 0 : parseFloat(r.item_total)
+        }
+      })
       
       const { error: insertError } = await supabase.from(TRACK_TABLE).insert(inserts)
-      if (insertError) throw insertError
+      if (insertError) {
+        console.error('AP Track Insert Error:', insertError)
+        throw insertError
+      }
       return
     }
     
@@ -118,7 +138,6 @@ async function setTrackedCloud(docKeys, checked) {
 }
 
 function getRowIdentity(row) {
-  // ใช้ unique_id จาก Store เพื่อความแม่นยำสูงสุด ป้องกันการติ๊กซ้ำซ้อน
   return String(row.unique_id || '')
 }
 
@@ -127,28 +146,24 @@ function isTracked(row) {
   return id ? trackedRowIds.value.includes(id) : false
 }
 
-function toggleTracked(row, checked) {
+async function toggleTracked(row, checked) {
   const currentId = getRowIdentity(row)
   if (!currentId) return
   
   if (checked) {
-    // Find all rows with the same doc_number
     const sameDocRows = trcloudStore.apItemRows.filter(r => r.doc_number === row.doc_number)
     const sameDocIds = sameDocRows.map(r => getRowIdentity(r)).filter(Boolean)
     
-    // Add all same doc IDs to trackedRowIds, placing the current one first
     const newTracked = [...sameDocIds.filter(id => id !== currentId), currentId]
     const existingTracked = trackedRowIds.value.filter(id => !newTracked.includes(id))
     trackedRowIds.value = [...newTracked.reverse(), ...existingTracked]
     
     persistTrackedRowIds()
-    setTrackedCloud(sameDocIds, true)
+    await setTrackedCloud(sameDocIds, true, sameDocRows)
   } else {
-    // Uncheck: only remove the current item
     trackedRowIds.value = trackedRowIds.value.filter((x) => x !== currentId)
-    
     persistTrackedRowIds()
-    setTrackedCloud(currentId, false)
+    await setTrackedCloud(currentId, false)
   }
 }
 

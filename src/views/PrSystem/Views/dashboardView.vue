@@ -150,6 +150,32 @@ function moneyText(amount, currency) {
   return `${a} ${c.toUpperCase()}`
 }
 
+function calculateAge(dateStr) {
+  if (!dateStr) return 0
+  try {
+    let cleanDate = String(dateStr).trim()
+    if (cleanDate.includes('/')) {
+      const [d, m, y] = cleanDate.split('/')
+      cleanDate = `${y}-${m}-${d}`
+    } else if (cleanDate.includes(' ')) {
+      cleanDate = cleanDate.split(' ')[0]
+    } else if (cleanDate.includes('T')) {
+      cleanDate = cleanDate.split('T')[0]
+    }
+
+    const issueDate = new Date(cleanDate)
+    if (isNaN(issueDate.getTime())) return 0
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    issueDate.setHours(0, 0, 0, 0)
+    const diffTime = today - issueDate
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+    return diffDays < 0 ? 0 : diffDays
+  } catch {
+    return 0
+  }
+}
+
 function formatDateTime(value) {
   if (!value) return '-'
   const d = new Date(value)
@@ -543,11 +569,31 @@ const urgentOnlyFiltered = computed(() => {
 })
 
 const apRecentFiltered = computed(() => {
+  let list = trcloudStore.apItemRows || []
+  
+  // กรองเฉพาะของวันนี้
+  const now = new Date()
+  const yyyy = now.getFullYear()
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const dd = String(now.getDate()).padStart(2, '0')
+  const today = `${yyyy}-${mm}-${dd}`
+  
+  list = list.filter(r => {
+    let docDate = r.issue_date || r.date || ''
+    if (docDate.includes(' ')) docDate = docDate.split(' ')[0]
+    else if (docDate.includes('T')) docDate = docDate.split('T')[0]
+    // รองรับรูปแบบ DD/MM/YYYY
+    if (docDate.includes('/')) {
+      const [d, m, y] = docDate.split('/')
+      docDate = `${y}-${m}-${d}`
+    }
+    return docDate === today
+  })
+
   const key = searchApText.value.trim().toLowerCase()
-  const list = apRecentRows.value || []
   if (!key) return list
   return list.filter((r) => {
-    const haystack = [r.invoice_number, r.document_number, r.organization, r.po, r.payment_status].filter(Boolean).join(' ').toLowerCase()
+    const haystack = [r.invoice_number, r.doc_number, r.organization, r.ref_po, r.item_name, r.status].filter(Boolean).join(' ').toLowerCase()
     return haystack.includes(key)
   })
 })
@@ -1302,7 +1348,12 @@ onUnmounted(() => {
     <div class="rounded-xl border mt-4 overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
       <div class="px-4 py-3 border-b" style="border-color: var(--color-border)">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div class="text-[13px] font-semibold" style="color: var(--color-text-primary)">รายการ AP ล่าสุด</div>
+          <div class="flex flex-col">
+            <div class="text-[13px] font-semibold" style="color: var(--color-text-primary)">รายการ AP ล่าสุด (เฉพาะวันนี้)</div>
+            <div class="text-[11px] text-orange-600 font-medium mt-0.5">
+              <i class="fa-solid fa-clock-rotate-left mr-1"></i> แสดงข้อมูลที่เกิดขึ้นในวันนี้เท่านั้น
+            </div>
+          </div>
           <div class="relative w-full sm:w-[360px]">
             <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[14px]" style="color: var(--color-text-muted)"></i>
             <input
@@ -1316,38 +1367,46 @@ onUnmounted(() => {
         </div>
       </div>
       <!-- scroll container: x และ y อยู่ที่ div นี้ -->
-      <div class="overflow-x-auto" style="max-height: 380px; overflow-y: auto">
-        <table class="w-full text-[13px] min-w-[980px]">
+      <div class="overflow-x-auto" style="max-height: 450px; overflow-y: auto">
+        <table class="w-full text-[13px] min-w-[1100px]">
           <!-- thead sticky ติดด้านบนของ scroll container -->
           <thead style="position: sticky; top: 0; z-index: 10; background: var(--color-bg-card)">
             <tr style="border-bottom: 1px solid var(--color-border)">
               <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลขที่เอกสาร</th>
-              <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลข PO</th>
-              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">ผู้ขาย/หน่วยงาน</th>
-              <th class="text-right px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ยอด</th>
-              <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">สถานะการชำระ</th>
               <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">วันที่</th>
+              <th class="text-center px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">อายุ (วัน)</th>
+              <th class="text-left px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">คู่ค้า</th>
+              <th class="text-left px-4 py-3 font-medium" style="color: var(--color-text-muted)">รายการสินค้า / คำอธิบาย</th>
+              <th class="text-center px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">จำนวน</th>
+              <th class="text-right px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ราคา/หน่วย</th>
+              <th class="text-right px-4 py-3 font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ยอดรวม</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="6" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</td>
+              <td colspan="8" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">
+                <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> กำลังโหลดข้อมูล...
+              </td>
             </tr>
             <tr v-else-if="!loading && apRecentFiltered.length === 0">
-              <td colspan="6" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล</td>
+              <td colspan="8" class="px-4 py-8 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ AP ของวันนี้</td>
             </tr>
             <tr
-              v-for="r in apRecentFiltered.slice(0, 10)"
+              v-for="r in apRecentFiltered"
               :key="r.id || r.invoice_number"
               class="border-b last:border-b-0 hover:bg-gray-50 transition-colors"
               style="border-color: var(--color-border)"
             >
               <td class="px-4 py-3 font-semibold whitespace-nowrap" style="color: #2563eb">{{ r.invoice_number || r.document_number || '-' }}</td>
-              <td class="px-4 py-3 whitespace-nowrap" style="color: var(--color-text-primary)">{{ r.po || '-' }}</td>
-              <td class="px-4 py-3" style="color: var(--color-text-primary); white-space: normal; word-break: break-word">{{ r.organization || '-' }}</td>
-              <td class="px-4 py-3 text-right whitespace-nowrap" style="color: var(--color-text-primary)">{{ moneyText(r.grand_total, r.currency) }}</td>
-              <td class="px-4 py-3 whitespace-nowrap" style="color: var(--color-text-secondary)">{{ r.payment_status || '-' }}</td>
-              <td class="px-4 py-3 text-[12px] whitespace-nowrap" style="color: var(--color-text-muted)">{{ r.issue_date || '-' }}</td>
+              <td class="px-4 py-3 whitespace-nowrap" style="color: var(--color-text-primary)">{{ r.issue_date || r.date || '-' }}</td>
+              <td class="px-4 py-3 text-center whitespace-nowrap" style="color: var(--color-text-secondary)">
+                <span class="px-2 py-0.5 rounded-full bg-gray-100 text-[11px] font-medium">{{ calculateAge(r.issue_date || r.date) }} วัน</span>
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap" style="color: var(--color-text-primary)">{{ r.organization || '-' }}</td>
+              <td class="px-4 py-3" style="color: var(--color-text-secondary); white-space: normal; word-break: break-word">{{ r.item_name || '-' }}</td>
+              <td class="px-4 py-3 text-center font-mono" style="color: var(--color-text-primary)">{{ formatNumber(r.quantity) }}</td>
+              <td class="px-4 py-3 text-right font-mono" style="color: var(--color-text-primary)">{{ formatNumber(r.price || r.unit_price) }}</td>
+              <td class="px-4 py-3 text-right font-bold font-mono" style="color: #16a34a">{{ moneyText(r.item_total || r.grand_total, r.currency) }}</td>
             </tr>
           </tbody>
         </table>

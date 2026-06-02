@@ -61,7 +61,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     const invoiceNumber = invoice?.expense_number || invoice?.invoice_number || invoice?.doc_number || invoice?.reference || invoice?.id || ''
     const companyFormat = invoice?.company_format || ''
     const docNumber = companyFormat ? `${companyFormat}${invoiceNumber}` : String(invoiceNumber || '')
-    const itemName = item?.product_name || item?.name || item?.title || item?.description || item?.item_name || item?.item || item?.product || ''
+    const itemName = item?.product_name || item?.name || item?.title || item?.description || item?.item_name || item?.item || item?.product || item?.description_th || item?.description_en || ''
     const status = invoice?.payment_status || invoice?.status || invoice?.status_payment || invoice?.status_text || invoice?.invoice_status || ''
 
     return {
@@ -81,8 +81,10 @@ export const useTrcloudStore = defineStore('trcloud', () => {
       category: item?.category || invoice?.category || '',
       staff: invoice?.staff || invoice?.created_by || '',
       department: invoice?.department || invoice?.department_name || '',
-      currency: String(invoice?.fx || invoice?.currency || invoice?.currency_name || 'LAK').toUpperCase(),
+      project: invoice?.project || invoice?.project_name || invoice?.department || invoice?.department_name || '',
+      currency: String(invoice?.fx || invoice?.currency || invoice?.currency_name || invoice?.currency_code || invoice?.fx_code || 'LAK').toUpperCase(),
       ref_po: invoice?.po || invoice?.reference || invoice?.po_number || '',
+      pr: invoice?.pr || invoice?.pr_number || invoice?.pr_no || invoice?.reference || '',
       expense: invoice?.expense || invoice?.expense_no || invoice?.expense_number || invoice?.expense_doc || invoice?.expense_id || '',
       payment: invoice?.payment || invoice?.payment_amount || 0
     }
@@ -100,7 +102,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           rows.push(buildApItemRow(baseInvoice, item))
         }
       } else {
-        const itemName = invoice?.description || invoice?.remark || invoice?.note || invoice?.title || ''
+        const itemName = invoice?.description || invoice?.remark || invoice?.note || invoice?.title || invoice?.item_name || invoice?.product_name || invoice?.description_th || ''
         const invoiceNumber = invoice?.invoice_number || invoice?.doc_number || invoice?.reference || invoice?.id || ''
         const companyFormat = invoice?.company_format || ''
         const docNumber = companyFormat ? `${companyFormat}${invoiceNumber}` : String(invoiceNumber || '')
@@ -121,8 +123,10 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           category: invoice?.category || '',
           staff: invoice?.staff || invoice?.created_by || '',
           department: invoice?.department || invoice?.department_name || '',
-          currency: String(invoice?.fx || invoice?.currency || invoice?.currency_name || 'LAK').toUpperCase(),
+          project: invoice?.project || invoice?.project_name || invoice?.department || invoice?.department_name || '',
+          currency: String(invoice?.fx || invoice?.currency || invoice?.currency_name || invoice?.currency_code || invoice?.fx_code || 'LAK').toUpperCase(),
           ref_po: invoice?.po || invoice?.reference || invoice?.po_number || '',
+          pr: invoice?.pr || invoice?.pr_number || invoice?.pr_no || invoice?.reference || '',
           expense: invoice?.expense || invoice?.expense_no || invoice?.expense_number || invoice?.expense_doc || invoice?.expense_id || '',
           payment: invoice?.payment || invoice?.payment_amount || 0
         })
@@ -165,8 +169,10 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           category: po?.category || '',
           staff: po?.staff || po?.created_by || '',
           department: po?.department || po?.department_name || '',
-          currency: String(po?.fx || po?.currency || po?.currency_name || 'LAK').toUpperCase(),
+          project: po?.project || po?.project_name || po?.department || po?.department_name || '',
+          currency: String(po?.fx || po?.currency || po?.currency_name || po?.currency_code || po?.fx_code || 'LAK').toUpperCase(),
           ref_po: po?.po || po?.reference || po?.po_number || '',
+          pr: po?.pr || po?.pr_number || po?.pr_no || po?.reference || '',
           expense: po?.expense || po?.expense_no || po?.expense_number || po?.expense_doc || po?.expense_id || '',
           payment: po?.payment || po?.payment_amount || 0
         })
@@ -208,8 +214,10 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           category: pr?.category || '',
           staff: pr?.staff || pr?.created_by || '',
           department: pr?.department || pr?.department_name || '',
-          currency: String(pr?.fx || pr?.currency || pr?.currency_name || 'LAK').toUpperCase(),
+          project: pr?.project || pr?.project_name || pr?.department || pr?.department_name || '',
+          currency: String(pr?.fx || pr?.currency || pr?.currency_name || pr?.currency_code || pr?.fx_code || 'LAK').toUpperCase(),
           ref_po: pr?.po || pr?.reference || pr?.po_number || '',
+          pr: pr?.pr || pr?.pr_number || pr?.pr_no || pr?.reference || '',
           expense: pr?.expense || pr?.expense_no || pr?.expense_number || pr?.expense_doc || pr?.expense_id || '',
           payment: pr?.payment || pr?.payment_amount || 0
         })
@@ -695,6 +703,9 @@ export const useTrcloudStore = defineStore('trcloud', () => {
               }
               it.status = status
               if (!it.payment_status) it.payment_status = status
+              
+              // Map currency
+              it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
             }
 
             let pid
@@ -710,12 +721,22 @@ export const useTrcloudStore = defineStore('trcloud', () => {
               if (!seen.has(pid)) {
                 seen.add(pid)
                 it.unique_id = String(pid) // เก็บ unique_id ไว้ในตัวข้อมูลเลย
+                
+                // Map currency for all types
+                if (!it.currency) {
+                  it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
+                }
+                
                 newItems.push(it)
               }
             } else {
               // If no identifier available, include the row to avoid losing data
               const fallbackId = `fallback_${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
               it.unique_id = fallbackId
+              
+              // Map currency for fallback case
+              it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
+              
               newItems.push(it)
             }
           }
@@ -737,7 +758,8 @@ export const useTrcloudStore = defineStore('trcloud', () => {
                 } else if (remain > 0 && remain < total) {
                   status = 'ยังไม่ชำระ'
                 }
-                return { ...x, payment_status: status }
+                const mappedCurrency = String(x.fx || x.currency || x.currency_name || x.currency_code || x.fx_code || 'LAK').toUpperCase()
+                return { ...x, payment_status: status, currency: mappedCurrency }
               })
               apRows.value = apList
             }
