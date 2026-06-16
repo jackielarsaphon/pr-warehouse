@@ -159,7 +159,7 @@ export default defineConfig(async ({ mode }) => {
     }
   } else if (staticCookie) {
     console.log('ℹ️ TRCloud proxy ใช้ TRCLOUD_COOKIE จาก .env')
-  } else {
+  } else if (mode !== 'production') {
     console.warn('⚠️ ไม่มี TRCLOUD_COOKIE และปิด login — API อาจตอบ mismatch')
   }
 
