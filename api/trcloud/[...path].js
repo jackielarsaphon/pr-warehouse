@@ -16,6 +16,8 @@ export default async function handler(req, res) {
     const path = Array.isArray(pathParts) ? pathParts.join('/') : (pathParts || '')
     const targetUrl = `https://thaidrill.trcloud.co/${path}`
 
+    const cookie = (req.headers['x-trcloud-cookie'] || '').trim()
+
     const rawBody = await new Promise((resolve, reject) => {
       const chunks = []
       req.on('data', (chunk) => chunks.push(chunk))
@@ -24,7 +26,7 @@ export default async function handler(req, res) {
     })
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 25000)
+    const timeout = setTimeout(() => controller.abort(), 8000)
 
     let response
     try {
@@ -38,15 +40,18 @@ export default async function handler(req, res) {
           'Accept-Language': 'th,en;q=0.9',
           'Origin': 'https://thaidrill.trcloud.co',
           'Referer': 'https://thaidrill.trcloud.co/application/',
+          ...(cookie ? { 'Cookie': cookie } : {}),
         },
         body: rawBody.length > 0 ? rawBody : undefined,
         signal: controller.signal,
+        redirect: 'follow',
       })
     } finally {
       clearTimeout(timeout)
     }
 
     const responseText = await response.text()
+    console.log(`[trcloud-proxy] ${req.method} ${path} -> ${response.status} (cookie: ${cookie ? 'yes' : 'no'})`)
     res.setHeader('Content-Type', response.headers.get('content-type') || 'application/json')
     return res.status(response.status).send(responseText)
 
