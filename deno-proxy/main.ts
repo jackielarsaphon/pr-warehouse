@@ -118,14 +118,20 @@ Deno.serve(async (req: Request) => {
     })
   }
 
-  // proxy: /trcloud-api/<path> -> https://thaidrill.trcloud.co/<path>
-  if (!url.pathname.startsWith('/trcloud-api/')) {
+  // proxy paths:
+  //   /p?path=<encoded TRCloud path>      (production — เลี่ยง static layer ของ Deno ที่ดัก path เหมือนไฟล์)
+  //   /trcloud-api/<path>                 (เผื่อ dev/legacy)
+  let trcloudPath = ''
+  if (url.pathname === '/p') {
+    trcloudPath = (url.searchParams.get('path') || '').replace(/^\/+/, '')
+  } else if (url.pathname.startsWith('/trcloud-api/')) {
+    trcloudPath = url.pathname.replace(/^\/trcloud-api\//, '') + url.search
+  } else {
     return new Response('Not found', { status: 404, headers: CORS_HEADERS })
   }
 
   try {
-    const path = url.pathname.replace(/^\/trcloud-api\//, '') + url.search
-    const targetUrl = `${BASE_URL}/${path}`
+    const targetUrl = `${BASE_URL}/${trcloudPath}`
 
     // ใช้ cookie จาก client ถ้ามี ไม่งั้น auto-login
     let cookie = (req.headers.get('x-trcloud-cookie') || '').trim()
@@ -159,7 +165,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const text = await response.text()
-    console.log(`[trcloud-proxy] ${req.method} ${path} -> ${response.status}`)
+    console.log(`[trcloud-proxy] ${req.method} ${trcloudPath} -> ${response.status}`)
     return new Response(text, {
       status: response.status,
       headers: {

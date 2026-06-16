@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { trcloudProxyExtraHeaders } from '@/utils/trcloudSession'
+import { trcloudProxyExtraHeaders, trcloudProxyUrl } from '@/utils/trcloudSession'
 
 export const useTrcloudStore = defineStore('trcloud', () => {
   const prRows = ref([])
@@ -633,8 +633,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
             ? new URLSearchParams({ json: JSON.stringify(finalPayload) })
             : new URLSearchParams(finalPayload)
 
-          const proxyBase = import.meta.env.VITE_TRCLOUD_PROXY_BASE || ''
-          const url = `${proxyBase}/trcloud-api${selectedEndpoint}`
+          const url = trcloudProxyUrl(selectedEndpoint)
           const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -797,7 +796,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
               if (!eid) return
               try {
                 const inner = { company_id: companyId, passkey: passkey, activate_date: 'on', expense_id: eid }
-                const r = await fetch(`${import.meta.env.VITE_TRCLOUD_PROXY_BASE || ''}/trcloud-api/application/expense/api/engine-expense/invoice-payment.php`, {
+                const r = await fetch(trcloudProxyUrl('/application/expense/api/engine-expense/invoice-payment.php'), {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
