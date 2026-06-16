@@ -165,7 +165,7 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     plugins: [vue()],
-    base: '/',
+    base: process.env.VITE_BASE_PATH || '/pr-warehouse/',
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

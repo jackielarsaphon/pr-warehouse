@@ -44,6 +44,7 @@ jobs:
           VITE_DATE_FROM: ${{ secrets.VITE_DATE_FROM }}
           VITE_DATE_TO: ${{ secrets.VITE_DATE_TO }}
           VITE_REFRESH_SEC: ${{ secrets.VITE_REFRESH_SEC }}
+          VITE_BASE_PATH: /pr-warehouse/
         run: npm run build
 
       - name: Setup Pages
