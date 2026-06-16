@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/trcloud-api/:path*",
-      "destination": "https://thaidrill.trcloud.co/:path*"
+      "destination": "/api/trcloud/:path*"
     }
   ]
 }
