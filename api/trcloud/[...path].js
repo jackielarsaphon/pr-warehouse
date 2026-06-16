@@ -11,29 +11,50 @@ export default async function handler(req, res) {
     return res.status(200).end()
   }
 
-  const pathParts = req.query.path
-  const path = Array.isArray(pathParts) ? pathParts.join('/') : (pathParts || '')
-  const targetUrl = `https://thaidrill.trcloud.co/${path}`
+  try {
+    const pathParts = req.query.path
+    const path = Array.isArray(pathParts) ? pathParts.join('/') : (pathParts || '')
+    const targetUrl = `https://thaidrill.trcloud.co/${path}`
 
-  const rawBody = await new Promise((resolve) => {
-    const chunks = []
-    req.on('data', (chunk) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-  })
+    const rawBody = await new Promise((resolve, reject) => {
+      const chunks = []
+      req.on('data', (chunk) => chunks.push(chunk))
+      req.on('end', () => resolve(Buffer.concat(chunks)))
+      req.on('error', reject)
+    })
 
-  const response = await fetch(targetUrl, {
-    method: req.method,
-    headers: {
-      'Content-Type': req.headers['content-type'] || 'application/x-www-form-urlencoded',
-      'X-Requested-With': 'XMLHttpRequest',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-      'Origin': 'https://thaidrill.trcloud.co',
-      'Referer': 'https://thaidrill.trcloud.co/application/',
-    },
-    body: rawBody.length > 0 ? rawBody : undefined,
-  })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 25000)
 
-  const responseText = await response.text()
-  res.setHeader('Content-Type', response.headers.get('content-type') || 'application/json')
-  return res.status(response.status).send(responseText)
+    let response
+    try {
+      response = await fetch(targetUrl, {
+        method: req.method,
+        headers: {
+          'Content-Type': req.headers['content-type'] || 'application/x-www-form-urlencoded',
+          'X-Requested-With': 'XMLHttpRequest',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'th,en;q=0.9',
+          'Origin': 'https://thaidrill.trcloud.co',
+          'Referer': 'https://thaidrill.trcloud.co/application/',
+        },
+        body: rawBody.length > 0 ? rawBody : undefined,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    const responseText = await response.text()
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'application/json')
+    return res.status(response.status).send(responseText)
+
+  } catch (err) {
+    console.error('[trcloud-proxy] Error:', err.message)
+    return res.status(502).json({
+      success: 0,
+      message: `Proxy error: ${err.message}`,
+    })
+  }
 }
