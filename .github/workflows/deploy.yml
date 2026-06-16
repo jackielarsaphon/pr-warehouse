@@ -45,7 +45,7 @@ jobs:
           VITE_DATE_TO: ${{ secrets.VITE_DATE_TO }}
           VITE_REFRESH_SEC: ${{ secrets.VITE_REFRESH_SEC }}
           VITE_BASE_PATH: /pr-warehouse/
-          VITE_TRCLOUD_PROXY_BASE: https://pr-warehouse-telo.vercel.app
+          VITE_TRCLOUD_PROXY_BASE: https://pr-warehouse-54.jackielarsaphon.deno.net
         run: npm run build
 
       - name: Setup Pages
