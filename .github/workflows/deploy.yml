@@ -1,0 +1,66 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_SUPABASE_URL_MWM: ${{ secrets.VITE_SUPABASE_URL_MWM }}
+          VITE_SUPABASE_ANON_KEY_MWM: ${{ secrets.VITE_SUPABASE_ANON_KEY_MWM }}
+          VITE_SUPABASE_BUCKET_MWM: ${{ secrets.VITE_SUPABASE_BUCKET_MWM }}
+          VITE_SUPABASE_EMPLOYEE_PROJECT2_DB: ${{ secrets.VITE_SUPABASE_EMPLOYEE_PROJECT2_DB }}
+          VITE_SUPABASE_DB_ANON_KEY_EMPLOYEE_PROJECT2: ${{ secrets.VITE_SUPABASE_DB_ANON_KEY_EMPLOYEE_PROJECT2 }}
+          VITE_TRCLOUD_COMPANY_ID: ${{ secrets.VITE_TRCLOUD_COMPANY_ID }}
+          VITE_TRCLOUD_PASSKEY: ${{ secrets.VITE_TRCLOUD_PASSKEY }}
+          VITE_TRCLOUD_BASE_URL: ${{ secrets.VITE_TRCLOUD_BASE_URL }}
+          VITE_USE_MOCK_DB: ${{ secrets.VITE_USE_MOCK_DB }}
+          VITE_DATE_FROM: ${{ secrets.VITE_DATE_FROM }}
+          VITE_DATE_TO: ${{ secrets.VITE_DATE_TO }}
+          VITE_REFRESH_SEC: ${{ secrets.VITE_REFRESH_SEC }}
+        run: npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
