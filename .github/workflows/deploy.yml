@@ -47,7 +47,8 @@ jobs:
           VITE_REFRESH_SEC: ${{ secrets.VITE_REFRESH_SEC }}
           VITE_BASE_PATH: /pr-warehouse/
           # TRCloud proxy = Supabase Edge Function (รันตลอด, ISP เข้าถึงได้, ไม่ถูกพักแบบ Deno Deploy)
-          VITE_TRCLOUD_PROXY_BASE: https://sowrzreodfzvipubqxwj.supabase.co/functions/v1/trcloud-proxy
+          # deploy อยู่ที่โปรเจกต์ yorziyqfagjkzaitkpft (verify_jwt=false, public) — แยกจาก DB ได้
+          VITE_TRCLOUD_PROXY_BASE: https://yorziyqfagjkzaitkpft.supabase.co/functions/v1/trcloud-proxy
         run: npm run build
 
       - name: Setup Pages

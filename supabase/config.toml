@@ -1,4 +1,5 @@
-project_id = "sowrzreodfzvipubqxwj"
+# proxy deploy แยกจาก DB ได้ — ปัจจุบัน deploy ที่โปรเจกต์นี้ (มีสิทธิ์ผ่าน MCP)
+project_id = "yorziyqfagjkzaitkpft"
 
 # proxy เรียกจากเบราว์เซอร์ตรงๆ ไม่มี user JWT → ต้องปิด verify_jwt
 # (ไม่งั้น gateway ตอบ 401 ก่อนถึงโค้ด ทำให้ไม่มี CORS header → เบราว์เซอร์ฟ้อง CORS)

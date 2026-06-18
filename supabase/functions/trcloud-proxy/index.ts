@@ -36,14 +36,16 @@ function readSetCookie(headers: Headers, name: string): string {
   return m ? m[1] : ''
 }
 
+// ตั้งผ่าน `supabase secrets set` ได้ ถ้าไม่ตั้งจะใช้ค่า fallback (ค่าเดียวกับ Deno proxy เดิม)
+const TR_USER = Deno.env.get('TRCLOUD_USERNAME') || 'don'
+const TR_PASS = Deno.env.get('TRCLOUD_PASSWORD') || 'dw12345'
+const TR_DEVICE = Deno.env.get('TRCLOUD_DEVICE_ID') || '0e218c475357ad43e7bcc689924d3ce6'
+
 /** login TRCloud แล้วคืน cookie header `trcloud=<deviceId>; PHPSESSID=<sessionId>` */
 async function trcloudLogin(): Promise<string> {
-  const username = Deno.env.get('TRCLOUD_USERNAME')
-  const password = Deno.env.get('TRCLOUD_PASSWORD')
-  const deviceId = Deno.env.get('TRCLOUD_DEVICE_ID')
-  if (!username || !password || !deviceId) {
-    throw new Error('ขาด env: TRCLOUD_USERNAME / TRCLOUD_PASSWORD / TRCLOUD_DEVICE_ID')
-  }
+  const username = TR_USER
+  const password = TR_PASS
+  const deviceId = TR_DEVICE
 
   const page = await fetch(`${BASE_URL}/application/login/`, { headers: { 'User-Agent': UA } })
   await page.body?.cancel()
