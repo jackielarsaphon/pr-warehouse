@@ -199,12 +199,16 @@ const purchaserList = computed(() => {
   return list.sort((a, b) => b.count - a.count)
 })
 
-// รายชื่อสำหรับ dropdown มอบหมาย = คนเปิด PO จริง (เรียงตามชื่อ)
-const purchaserNames = computed(() =>
-  [...new Set(trcloudStore.poItemRows.map((row) => (row.staff || '').trim()).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, 'th')
-  )
-)
+// รายชื่อผู้จัดซื้อสำหรับ dropdown มอบหมาย (รายชื่อคงที่ตามที่กำหนด)
+const PURCHASERS = [
+  { code: 'L2304126', name: 'สินทะสอน อินทะวง' },
+  { code: 'L26022053', name: 'คำกอง แก้วมะนี' },
+  { code: 'L2602022', name: 'พอนวิไลสัก ฟองสานุวง' },
+  { code: 'L2605038', name: 'เกียงสะไหม ไชยะพูมี' },
+  { code: 'L2606013', name: 'เจียง' },
+  { code: 'L2509101', name: 'ลัดสะหมี ลาดสะบันดิด' },
+]
+const purchaserNames = PURCHASERS.map((p) => p.name)
 
 const selectedPurchaserData = computed(() => purchaserList.value.find((p) => p.name === selectedPurchaser.value) || null)
 
@@ -530,7 +534,7 @@ watch(viewMode, (mode) => {
                       <option value="">— ยังไม่มอบหมาย —</option>
                       <!-- เก็บค่าที่เคยมอบหมายไว้ ถ้าไม่อยู่ในรายชื่อคนเปิด PO -->
                       <option v-if="assigneeOf(r) && !purchaserNames.includes(assigneeOf(r))" :value="assigneeOf(r)">{{ assigneeOf(r) }}</option>
-                      <option v-for="u in purchaserNames" :key="u" :value="u">{{ u }}</option>
+                      <option v-for="p in PURCHASERS" :key="p.code" :value="p.name">{{ p.name }} ({{ p.code }})</option>
                     </select>
                     <i v-if="isSaving(r)" class="fa-solid fa-circle-notch fa-spin text-[12px] text-blue-500"></i>
                   </div>
