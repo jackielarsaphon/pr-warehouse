@@ -282,25 +282,22 @@ async function saveTracking(prKey, patch) {
 
   try {
     const updated_by = auth.user?.fullname || auth.user?.username || null
-    if (existing.id) {
-      const { error } = await supabase
-        .from(TABLE)
-        .update({ assignee: next.assignee || null, remark: next.remark || null, updated_by, updated_at: new Date().toISOString() })
-        .eq('id', existing.id)
-      if (error) throw error
-    } else {
-      const { data, error } = await supabase
-        .from(TABLE)
-        .insert({ pr_key: prKey, assignee: next.assignee || null, remark: next.remark || null, updated_by })
-        .select()
-      if (error) throw error
-      const inserted = Array.isArray(data) ? data[0] : data
-      if (inserted?.id) {
-        trackingMap.value = { ...trackingMap.value, [prKey]: { ...next, id: inserted.id } }
-      }
+    // upsert ตาม pr_key — กันชน unique index เวลามีหลาย user แก้ใบเดียวกัน
+    // (insert ตรงๆ จะ error ถ้า user อื่นสร้างแถวนั้นไว้แล้ว → เคยทำให้ "มอบหมายแล้วหาย")
+    const { data, error } = await supabase
+      .from(TABLE)
+      .upsert(
+        { pr_key: prKey, assignee: next.assignee || null, remark: next.remark || null, updated_by, updated_at: new Date().toISOString() },
+        { onConflict: 'pr_key' }
+      )
+      .select()
+    if (error) throw error
+    const saved = Array.isArray(data) ? data[0] : data
+    if (saved?.id) {
+      trackingMap.value = { ...trackingMap.value, [prKey]: { ...next, id: saved.id } }
     }
   } catch (e) {
-    console.warn('save pr_purchase_tracking failed:', e?.message || e)
+    console.error('❌ บันทึกการมอบหมาย (pr_purchase_tracking) ไม่สำเร็จ:', e?.message || e)
   } finally {
     const k2 = new Set(savingKeys.value)
     k2.delete(prKey)

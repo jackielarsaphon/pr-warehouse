@@ -40,7 +40,8 @@ jobs:
           VITE_TRCLOUD_COMPANY_ID: ${{ secrets.VITE_TRCLOUD_COMPANY_ID }}
           VITE_TRCLOUD_PASSKEY: ${{ secrets.VITE_TRCLOUD_PASSKEY }}
           VITE_TRCLOUD_BASE_URL: ${{ secrets.VITE_TRCLOUD_BASE_URL }}
-          VITE_USE_MOCK_DB: ${{ secrets.VITE_USE_MOCK_DB }}
+          # บังคับใช้ฐานข้อมูลจริงบน production เสมอ (mock = localStorage ต่อ browser ไม่แชร์ข้าม user)
+          VITE_USE_MOCK_DB: 'false'
           VITE_DATE_FROM: ${{ secrets.VITE_DATE_FROM }}
           VITE_DATE_TO: ${{ secrets.VITE_DATE_TO }}
           VITE_REFRESH_SEC: ${{ secrets.VITE_REFRESH_SEC }}

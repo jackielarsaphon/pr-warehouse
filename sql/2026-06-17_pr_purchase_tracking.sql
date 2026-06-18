@@ -21,3 +21,21 @@ create table if not exists public.pr_purchase_tracking (
 -- กันซ้ำระดับฐานข้อมูล → ให้ upsert(onConflict: pr_key) ทำงานได้
 create unique index if not exists pr_purchase_tracking_pr_key_uniq
   on public.pr_purchase_tracking (pr_key);
+
+-- ----------------------------------------------------------------------------
+-- สิทธิ์เข้าถึง: แอปยิงผ่าน anon key → ต้อง grant + เปิด policy ให้ anon อ่าน/เขียนได้
+-- (ไม่งั้น insert/update เงียบๆ ล้มเหลว → มอบหมายแล้วหายตอน reload และไม่แชร์ข้าม user)
+-- ----------------------------------------------------------------------------
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.pr_purchase_tracking to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
+
+alter table public.pr_purchase_tracking enable row level security;
+
+drop policy if exists pr_purchase_tracking_all on public.pr_purchase_tracking;
+create policy pr_purchase_tracking_all
+  on public.pr_purchase_tracking
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
