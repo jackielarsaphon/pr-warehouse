@@ -95,11 +95,17 @@ async function trcloudLogin(): Promise<string> {
 }
 
 /** คืน cookie ที่ login แล้ว (cache) */
-async function getSessionCookie(): Promise<string> {
-  if (cachedCookie && Date.now() - cacheTime < SESSION_TTL_MS) return cachedCookie
+async function getSessionCookie(force = false): Promise<string> {
+  if (!force && cachedCookie && Date.now() - cacheTime < SESSION_TTL_MS) return cachedCookie
   cachedCookie = await trcloudLogin()
   cacheTime = Date.now()
   return cachedCookie
+}
+
+/** ล้าง session cache (ใช้เมื่อ TRCloud ตอบ mismatch = session หมดอายุ) */
+function invalidateSession() {
+  cachedCookie = ''
+  cacheTime = 0
 }
 
 Deno.serve(async (req: Request) => {
@@ -134,44 +140,55 @@ Deno.serve(async (req: Request) => {
     const targetUrl = `${BASE_URL}/${trcloudPath}`
 
     // ใช้ cookie จาก client ถ้ามี ไม่งั้น auto-login
-    let cookie = (req.headers.get('x-trcloud-cookie') || '').trim()
-    if (!cookie) cookie = await getSessionCookie()
-
+    const clientCookie = (req.headers.get('x-trcloud-cookie') || '').trim()
     const rawBody = req.method === 'POST' ? await req.arrayBuffer() : undefined
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 20000)
-
-    let response: Response
-    try {
-      response = await fetch(targetUrl, {
-        method: req.method,
-        headers: {
-          'Content-Type': req.headers.get('content-type') || 'application/x-www-form-urlencoded',
-          'X-Requested-With': 'XMLHttpRequest',
-          'User-Agent': UA,
-          'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'th,en;q=0.9',
-          'Origin': BASE_URL,
-          'Referer': `${BASE_URL}/application/`,
-          'Cookie': cookie,
-        },
-        body: rawBody && rawBody.byteLength > 0 ? rawBody : undefined,
-        signal: controller.signal,
-        redirect: 'follow',
-      })
-    } finally {
-      clearTimeout(timeout)
+    async function callTrcloud(cookie: string): Promise<{ status: number; text: string; contentType: string }> {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 20000)
+      try {
+        const response = await fetch(targetUrl, {
+          method: req.method,
+          headers: {
+            'Content-Type': req.headers.get('content-type') || 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'User-Agent': UA,
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'th,en;q=0.9',
+            'Origin': BASE_URL,
+            'Referer': `${BASE_URL}/application/`,
+            'Cookie': cookie,
+          },
+          body: rawBody && rawBody.byteLength > 0 ? rawBody : undefined,
+          signal: controller.signal,
+          redirect: 'follow',
+        })
+        return {
+          status: response.status,
+          text: await response.text(),
+          contentType: response.headers.get('content-type') || 'application/json',
+        }
+      } finally {
+        clearTimeout(timeout)
+      }
     }
 
-    const text = await response.text()
-    console.log(`[trcloud-proxy] ${req.method} ${trcloudPath} -> ${response.status}`)
-    return new Response(text, {
-      status: response.status,
-      headers: {
-        ...CORS_HEADERS,
-        'Content-Type': response.headers.get('content-type') || 'application/json',
-      },
+    let cookie = clientCookie || await getSessionCookie()
+    let result = await callTrcloud(cookie)
+
+    // ถ้า TRCloud ตอบ mismatch (session หมดอายุ) และเราใช้ auto-login อยู่ →
+    // login ใหม่แล้วลองอีกครั้งหนึ่ง (self-heal)
+    if (!clientCookie && /mismatch|passkey/i.test(result.text)) {
+      console.warn('[trcloud-proxy] mismatch — re-login & retry')
+      invalidateSession()
+      cookie = await getSessionCookie(true)
+      result = await callTrcloud(cookie)
+    }
+
+    console.log(`[trcloud-proxy] ${req.method} ${trcloudPath} -> ${result.status}`)
+    return new Response(result.text, {
+      status: result.status,
+      headers: { ...CORS_HEADERS, 'Content-Type': result.contentType },
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

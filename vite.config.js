@@ -147,16 +147,40 @@ export default defineConfig(async ({ mode }) => {
 
   let trcloudCookie = staticCookie
 
-  if (useTrcloudLoginCookie) {
-    try {
-      trcloudCookie = await trcloudLogin(env.TRCLOUD_USERNAME, env.TRCLOUD_PASSWORD, deviceId)
-      console.log('🍪 Cookie (login):', trcloudCookie.slice(0, 80) + (trcloudCookie.length > 80 ? '…' : ''))
-    } catch (err) {
-      console.error('❌ TRCloud Login Error:', err.message)
-      if (!staticCookie) {
-        console.warn('⚠️ ไม่มี TRCLOUD_COOKIE สำรอง — proxy จะไม่ส่ง session')
+  // ── session ที่ล็อกอินไว้ + กลไก refresh ───────────────────────────────────
+  // ปัญหาเดิม: dev proxy ล็อกอินครั้งเดียวตอน start แล้วไม่ต่ออายุ พอ PHPSESSID
+  // หมดอายุ (TRCloud ~ไม่กี่สิบนาที) request จะวิ่งไปด้วย session ที่หมดอายุ →
+  // TRCloud มองว่า "User" (จาก session) ไม่ตรงกับ passkey → "User and Passkey are mismatched!"
+  // ทางแก้: ต่ออายุ session เป็นช่วงๆ + re-login ทันทีเมื่อเจอ mismatch
+  const SESSION_TTL_MS = 15 * 60 * 1000
+  let lastLoginAt = 0
+  let loginInFlight = null
+
+  async function refreshSession(reason = '') {
+    if (!useTrcloudLoginCookie) return trcloudCookie
+    if (loginInFlight) return loginInFlight // กัน login ซ้ำพร้อมกันหลาย request
+    loginInFlight = (async () => {
+      try {
+        const cookie = await trcloudLogin(env.TRCLOUD_USERNAME, env.TRCLOUD_PASSWORD, deviceId)
+        trcloudCookie = cookie
+        lastLoginAt = Date.now()
+        console.log(`🍪 TRCloud session refreshed${reason ? ` (${reason})` : ''}:`, cookie.slice(0, 60) + '…')
+      } catch (err) {
+        console.error('❌ TRCloud Login Error:', err.message)
+        if (!staticCookie) console.warn('⚠️ ไม่มี TRCLOUD_COOKIE สำรอง — proxy จะไม่ส่ง session')
+      } finally {
+        loginInFlight = null
       }
-    }
+      return trcloudCookie
+    })()
+    return loginInFlight
+  }
+
+  if (useTrcloudLoginCookie) {
+    await refreshSession('startup')
+    // ต่ออายุเชิงรุกเป็นช่วงๆ กัน session หมดอายุระหว่างใช้งาน
+    const timer = setInterval(() => refreshSession('interval'), SESSION_TTL_MS)
+    if (timer.unref) timer.unref()
   } else if (staticCookie) {
     console.log('ℹ️ TRCloud proxy ใช้ TRCLOUD_COOKIE จาก .env')
   } else if (mode !== 'production') {
@@ -192,9 +216,28 @@ export default defineConfig(async ({ mode }) => {
                   .join('; ')
                 if (newCookies) trcloudCookie = mergeCookieHeaders(trcloudCookie, newCookies)
               }
+
+              // ตรวจคำตอบ: ถ้า TRCloud ตอบ mismatch แปลว่า session หมดอายุ → re-login ทันที
+              // (แค่สังเกต body ไม่กระทบการ pipe กลับไป client)
+              if (useTrcloudLoginCookie) {
+                let peek = ''
+                proxyRes.on('data', (c) => {
+                  if (peek.length < 2000) peek += c.toString('utf8')
+                })
+                proxyRes.on('end', () => {
+                  if (/mismatch|passkey/i.test(peek)) {
+                    console.warn('⚠️ TRCloud ตอบ "User and Passkey are mismatched" — กำลัง re-login ใหม่…')
+                    refreshSession('mismatch')
+                  }
+                })
+              }
             })
 
             proxy.on('proxyReq', (proxyReq, req) => {
+              // ถ้า session เก่ากว่า TTL ให้ต่ออายุแบบ background (request นี้ยังใช้ของเดิมไปก่อน)
+              if (useTrcloudLoginCookie && Date.now() - lastLoginAt > SESSION_TTL_MS) {
+                refreshSession('stale')
+              }
               proxyReq.removeHeader('cookie')
               const clientCookie = String(req.headers['x-trcloud-cookie'] || '').trim()
               proxyReq.removeHeader('x-trcloud-cookie')

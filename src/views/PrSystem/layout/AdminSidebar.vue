@@ -25,6 +25,7 @@ const menuItems = [
       { id: "/#/dashboard", icon: "fa-house", label: "แดชบอร์ด" },
       { id: "/#/form_submit_exp_summary", icon: "fa-bell", label: "สรุปข้อมูลแจ้งเตือน รายวัน" },
       { id: "/#/submit_amount", icon: "fa-user-check", label: "สรุปจำนวนตาม PO" },
+      { id: "/#/pr_purchase_summary", icon: "fa-clipboard-list", label: "สรุปงาน PR จัดซื้อ" },
     ]
   },
   {
@@ -90,7 +91,7 @@ watch(
   (id) => {
     const key = (id ?? "").toString()
     if (key.includes("system_admins")) systemAdminsOpen.value = true
-    if (key.includes("pr_") || key.includes("pr_list")) prListOpen.value = true
+    if ((key.includes("pr_") || key.includes("pr_list")) && !key.includes("pr_purchase_summary")) prListOpen.value = true
     if (key.includes("_exp")) formExpOpen.value = true
     if (key.includes("_ap")) formApOpen.value = true
   },
@@ -105,7 +106,7 @@ function selectItem(item) {
 function getSectionKey(item) {
   const id = (item?.id ?? "").toString()
   if (id.includes("system_admins")) return "system_admins"
-  if (id.includes("pr_") || id.includes("pr_list")) return "pr_list"
+  if ((id.includes("pr_") || id.includes("pr_list")) && !id.includes("pr_purchase_summary")) return "pr_list"
   if (id.includes("_exp")) return "form_exp"
   if (id.includes("_ap")) return "form_ap"
   return ""
@@ -115,7 +116,7 @@ function isSectionActive(item) {
   const activeId = (props.activeItemId ?? "").toString()
   const section = getSectionKey(item)
   if (section === "system_admins") return activeId.includes("system_admins")
-  if (section === "pr_list") return activeId.includes("pr_") || activeId.includes("pr_list")
+  if (section === "pr_list") return (activeId.includes("pr_") || activeId.includes("pr_list")) && !activeId.includes("pr_purchase_summary")
   if (section === "form_exp") return activeId.includes("_exp")
   if (section === "form_ap") return activeId.includes("_ap")
   return false
