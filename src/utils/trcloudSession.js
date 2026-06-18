@@ -27,10 +27,9 @@ export function clearTrcloudProxyCookie() {
 
 /** Header ที่ proxy อ่านแล้วแปลงเป็น Cookie ไปยัง TRCloud */
 export function trcloudProxyExtraHeaders() {
-  // proxy เป็น Supabase Edge Function แบบ public (verify_jwt=false) → ไม่ต้องส่ง apikey
-  // (ถ้าส่ง apikey ของคนละโปรเจกต์ gateway จะตอบ 401)
   const c = getTrcloudProxyCookie()
-  return c ? { 'X-TRCloud-Cookie': c } : {}
+  if (!c) return {}
+  return { 'X-TRCloud-Cookie': c }
 }
 
 /**
