@@ -1,0 +1,6 @@
+project_id = "sowrzreodfzvipubqxwj"
+
+# proxy เรียกจากเบราว์เซอร์ตรงๆ ไม่มี user JWT → ต้องปิด verify_jwt
+# (ไม่งั้น gateway ตอบ 401 ก่อนถึงโค้ด ทำให้ไม่มี CORS header → เบราว์เซอร์ฟ้อง CORS)
+[functions.trcloud-proxy]
+verify_jwt = false
