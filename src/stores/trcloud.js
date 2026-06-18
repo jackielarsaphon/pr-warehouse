@@ -421,6 +421,64 @@ export const useTrcloudStore = defineStore('trcloud', () => {
 
   const getCurrentRangeKey = () => `${dateFrom.value || ''}_${dateTo.value || ''}`
 
+  // ── persistent cache: ลดการยิง proxy ──────────────────────────────────────
+  // ปัญหาเดิม: cache อยู่ใน memory เท่านั้น → reload หน้าเว็บทีไรต้องดึงใหม่ทั้ง 5 ประเภท
+  // (paginate หลายพันรายการต่อครั้ง) ทำให้ Deno proxy ใช้โควต้าหมดเร็วจนถูกระงับ
+  // แก้: เก็บผลลง localStorage แล้ว rehydrate ตอนเปิดใหม่ ถ้ายังไม่เกิน TTL ก็ไม่ต้องยิง proxy
+  const CACHE_TTL_MS = 30 * 60 * 1000 // 30 นาที (กด "ดึงข้อมูล" เพื่อ force refresh ได้ตลอด)
+  const CACHE_PREFIX = 'trcloud_cache_v1_'
+  const CACHE_TYPES = ['pr', 'po', 'ap', 'pv', 'expense']
+
+  function persistMeta() {
+    try {
+      localStorage.setItem(CACHE_PREFIX + 'meta', JSON.stringify({
+        savedAt: Date.now(),
+        lastFetched: lastFetched.value ? new Date(lastFetched.value).toISOString() : null,
+        typeLastFetchedAt: typeLastFetchedAt.value,
+        typeLastRange: typeLastRange.value,
+      }))
+    } catch {}
+  }
+
+  function persistType(type) {
+    try {
+      const json = JSON.stringify(getRowsByType(type))
+      // กัน localStorage เต็ม (ราว 5MB/UTF-16) — ข้อมูลใหญ่เกินก็ข้าม (จะดึงใหม่ตอนต้องใช้)
+      if (json.length > 2_000_000) localStorage.removeItem(CACHE_PREFIX + type)
+      else localStorage.setItem(CACHE_PREFIX + type, json)
+    } catch { try { localStorage.removeItem(CACHE_PREFIX + type) } catch {} }
+    persistMeta()
+  }
+
+  function hydrateCache() {
+    try {
+      const metaRaw = localStorage.getItem(CACHE_PREFIX + 'meta')
+      if (!metaRaw) return
+      const meta = JSON.parse(metaRaw)
+      if (!meta?.savedAt || Date.now() - meta.savedAt > CACHE_TTL_MS) {
+        // หมดอายุ → ล้างทิ้งทั้งหมด
+        localStorage.removeItem(CACHE_PREFIX + 'meta')
+        CACHE_TYPES.forEach((t) => localStorage.removeItem(CACHE_PREFIX + t))
+        return
+      }
+      for (const t of CACHE_TYPES) {
+        const raw = localStorage.getItem(CACHE_PREFIX + t)
+        if (!raw) continue
+        const rows = JSON.parse(raw)
+        if (!Array.isArray(rows) || !rows.length) continue
+        if (t === 'pr') prRows.value = rows
+        else if (t === 'po') poRows.value = rows
+        else if (t === 'ap') apRows.value = rows
+        else if (t === 'pv') pvRows.value = rows
+        else if (t === 'expense') expenseRows.value = rows
+      }
+      if (meta.typeLastFetchedAt) typeLastFetchedAt.value = meta.typeLastFetchedAt
+      if (meta.typeLastRange) typeLastRange.value = meta.typeLastRange
+      if (meta.lastFetched) lastFetched.value = new Date(meta.lastFetched)
+    } catch {}
+  }
+  hydrateCache()
+
   const shouldUseTypeCache = (type, force = false) => {
     if (force) return false
     const rows = getRowsByType(type)
@@ -433,7 +491,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     if (!lastAt) return false
 
     const freshMs = Date.now() - new Date(lastAt).getTime()
-    return freshMs < 5 * 60 * 1000
+    return freshMs < CACHE_TTL_MS
   }
 
   async function fetchTrcloudData(type = 'pr', options = {}) {
@@ -783,6 +841,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
 
       typeLastFetchedAt.value[type] = new Date()
       typeLastRange.value[type] = getCurrentRangeKey()
+      persistType(type) // เก็บลง localStorage เพื่อให้ reload ครั้งหน้าไม่ต้องยิง proxy ซ้ำ
 
       // After all pages are fetched, do the background AP status check
       if (type === 'ap' && !skipApStatusSync && apRows.value.length > 0) {
@@ -849,6 +908,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         fetchTrcloudData('expense', { force, skipApStatusSync })
       ])
       lastFetched.value = new Date()
+      persistMeta()
     } finally {
       loading.value = false
     }
