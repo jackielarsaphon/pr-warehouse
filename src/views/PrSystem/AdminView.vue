@@ -39,6 +39,14 @@ const auth = useAuthStore()
 const trcloudStore = useTrcloudStore()
 const sidebarOpen = ref(false)
 
+const ZOOM_STORAGE_KEY = 'mw-prsystem-zoom'
+const zoom = ref(parseFloat(localStorage.getItem(ZOOM_STORAGE_KEY) || '1'))
+function setZoom(v) {
+  zoom.value = Math.min(1.5, Math.max(0.5, Math.round(v * 10) / 10))
+  localStorage.setItem(ZOOM_STORAGE_KEY, zoom.value)
+}
+const zoomLabel = computed(() => Math.round(zoom.value * 100) + '%')
+
 const headerUser = computed(() => ({
   fullName: auth.user?.fullname ?? "-",
   employeeId: auth.user?.emp_code ?? "-",
@@ -226,7 +234,7 @@ const onLogout = async () => {
         @toggle-sidebar="sidebarOpen = true"
         @logout="onLogout"
       />
-      <main class="flex-1 overflow-auto p-4 sm:p-6">
+      <main class="flex-1 overflow-auto p-4 sm:p-6" :style="{ zoom: zoom }">
         <DashboardView v-if="activePage === 'dashboard'" />
         <NotificationSummaryView v-else-if="activePage === 'notification_summary'" />
         <SubmitAmountView v-else-if="activePage === 'submit_amount'" @selectPage="onSelect" />
@@ -299,5 +307,29 @@ const onLogout = async () => {
         </div>
       </main>
     </div>
+  </div>
+
+  <!-- zoom bar -->
+  <div class="fixed bottom-4 right-4 z-50 flex items-center gap-1 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-lg px-2 py-1.5">
+    <button
+      type="button"
+      class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-base font-bold disabled:opacity-30"
+      :disabled="zoom <= 0.5"
+      @click="setZoom(zoom - 0.1)"
+      aria-label="ย่อ"
+    >−</button>
+    <button
+      type="button"
+      class="min-w-[3.5rem] text-center text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg px-1 py-1 transition"
+      @click="setZoom(1)"
+      title="รีเซ็ต"
+    >{{ zoomLabel }}</button>
+    <button
+      type="button"
+      class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-base font-bold disabled:opacity-30"
+      :disabled="zoom >= 1.5"
+      @click="setZoom(zoom + 0.1)"
+      aria-label="ขยาย"
+    >+</button>
   </div>
 </template>
