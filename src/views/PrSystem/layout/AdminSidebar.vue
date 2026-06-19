@@ -26,6 +26,7 @@ const menuItems = [
       { id: "/#/form_submit_exp_summary", icon: "fa-bell", label: "สรุปข้อมูลแจ้งเตือน รายวัน" },
       { id: "/#/submit_amount", icon: "fa-user-check", label: "สรุปจำนวนตาม PO" },
       { id: "/#/pr_purchase_summary", icon: "fa-clipboard-list", label: "สรุปงาน PR จัดซื้อ" },
+      { id: "/#/urgent_payment", icon: "fa-bolt", label: "สรุปขอจ่ายด่วน" },
     ]
   },
   {

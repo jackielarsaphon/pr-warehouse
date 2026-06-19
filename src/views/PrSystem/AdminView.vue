@@ -34,6 +34,7 @@ import SubmitAmountView from "./Views/submit_amountView.vue"
 import NotificationSummaryView from "./Views/notificationSummaryView.vue"
 import TankpoView from "./Views/TankpoView.vue"
 import PrPurchaseSummaryView from "./Views/PrPurchaseSummaryView.vue"
+import UrgentPaymentView from "./Views/UrgentPaymentView.vue"
 
 const auth = useAuthStore()
 const trcloudStore = useTrcloudStore()
@@ -70,6 +71,7 @@ const selectionOptions = [
   { itemId: "/#/pr_history", itemLabel: "ประวัติทั้งหมด" },
   { itemId: "/#/submit_amount", itemLabel: "สรุปจำนวนตาม Staff" },
   { itemId: "/#/pr_purchase_summary", itemLabel: "สรุปงาน PR จัดซื้อ" },
+  { itemId: "/#/urgent_payment", itemLabel: "สรุปขอจ่ายด่วน" },
   { itemId: "/#/tankpo", itemLabel: "สรุปตามคนเปิด PO (แผนภูมิ)" },
   { itemId: "/#/form_submit_exp_summary", itemLabel: "ข้อมูลสรุปรายการ" },
   { itemId: "/#/form_submit_exp", itemLabel: "ฟอร์มส่งรายการ Exp" },
@@ -112,6 +114,7 @@ const activePage = computed(() => {
   const id = (selection.value.itemId ?? "").toString()
   if (id.includes("dashboard")) return "dashboard"
   if (id.includes("pr_purchase_summary")) return "pr_purchase_summary"
+  if (id.includes("urgent_payment")) return "urgent_payment"
   if (id.includes("pr_list")) return "pr_list"
   if (id.includes("pr_po_items_detail")) return "pr_exp_items"
   if (id.includes("pr_po_items")) return "pr_po_items"
@@ -239,6 +242,7 @@ const onLogout = async () => {
         <NotificationSummaryView v-else-if="activePage === 'notification_summary'" />
         <SubmitAmountView v-else-if="activePage === 'submit_amount'" @selectPage="onSelect" />
         <PrPurchaseSummaryView v-else-if="activePage === 'pr_purchase_summary'" @selectPage="onSelect" />
+        <UrgentPaymentView v-else-if="activePage === 'urgent_payment'" />
         <TankpoView v-else-if="activePage === 'tankpo'" @selectPage="onSelect" />
         <SystemadminLisView v-else-if="activePage === 'system_users'" />
         <AdminLogsView v-else-if="activePage === 'usage_logs'" />
