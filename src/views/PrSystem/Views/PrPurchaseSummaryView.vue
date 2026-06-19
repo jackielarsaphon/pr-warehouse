@@ -233,10 +233,26 @@ const purchaserAssignSummary = computed(() =>
   PURCHASERS.map((p) => ({ ...p, assigned: assignedCountByName.value[p.name] || 0 })).sort((a, b) => b.assigned - a.assigned)
 )
 
-// คลิกผู้จัดซื้อในแผงข้าง → ดู PR ที่มอบหมายให้คนนั้น
+// คลิกผู้จัดซื้อในแผงข้าง → ดู PR ที่มอบหมายให้คนนั้น (ล้าง cost center เพื่อโชทุก cost center)
 const selectedAssignee = ref(null)
 function selectAssignee(name) {
-  selectedAssignee.value = selectedAssignee.value === name ? null : name
+  if (selectedAssignee.value === name) {
+    selectedAssignee.value = null
+  } else {
+    selectedAssignee.value = name
+    selectedCostCenter.value = null
+    showAllRows.value = false
+  }
+}
+
+// โหมด "ทั้งหมด" — แสดง PR ทุก cost center ในตาราง
+const showAllRows = ref(false)
+function toggleShowAll() {
+  showAllRows.value = !showAllRows.value
+  if (showAllRows.value) {
+    selectedCostCenter.value = null
+    selectedAssignee.value = null
+  }
 }
 
 const assignedRows = computed(() => {
@@ -366,8 +382,9 @@ function onRemark(row, value) {
 // ─── interactions ────────────────────────────────────────────────────────────
 // เลือกได้พร้อมกันทั้งศูนย์ต้นทุนและผู้จัดซื้อ (ไม่สลับซ่อนกัน)
 function selectCostCenter(name) {
-  // คลิกซ้ำการ์ดเดิม = ยกเลิกเลือก
   selectedCostCenter.value = selectedCostCenter.value === name ? null : name
+  showAllRows.value = false
+  selectedAssignee.value = null
 }
 
 function selectPurchaser(name) {
@@ -488,6 +505,13 @@ watch(viewMode, (mode) => {
         <div class="flex items-center gap-2 text-[13px] font-semibold" style="color: var(--color-text-primary)">
           <i class="fa-solid fa-layer-group text-orange-500"></i>
           ศูนย์ต้นทุน / โครงการ ({{ costCenterCards.length }})
+          <button
+            type="button"
+            @click.stop="toggleShowAll"
+            :class="['px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border transition-all', showAllRows ? 'bg-blue-600 text-white border-blue-600' : 'text-blue-600 border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20']"
+          >
+            <i class="fa-solid fa-table-list mr-1"></i>ทั้งหมด
+          </button>
           <span v-if="selectedCostCenter && cardsCollapsed" class="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-[11px] font-medium">
             <i class="fa-solid fa-folder-open mr-1 text-orange-500"></i>{{ selectedCostCenter }}
           </span>
@@ -771,7 +795,81 @@ watch(viewMode, (mode) => {
             <i class="fa-solid fa-circle-info mr-1.5 text-blue-400"></i>{{ selectedAssignee }} ยังไม่มีงานที่มอบหมาย{{ statusFilter !== 'all' ? ' ตามสถานะที่กรอง' : '' }}
           </div>
 
-          <div v-if="!(selectedCostCenter && selectedCostCenterRows.length) && !(selectedPurchaser && purchaserGroups.length) && !selectedAssignee" class="h-full flex flex-col items-center justify-center p-12 text-center" style="color: var(--color-text-muted)">
+          <!-- ALL ROWS: แสดงทุก cost center -->
+          <div v-if="showAllRows" class="px-3 py-2 flex items-center justify-between gap-3 bg-blue-50/60 dark:bg-blue-900/10" style="border-bottom: 1px solid var(--color-border)">
+            <span class="text-[12px] font-semibold" style="color: var(--color-text-primary)">
+              <i class="fa-solid fa-table-list mr-1.5 text-blue-500"></i>รายการ PR ทั้งหมด (ทุกศูนย์ต้นทุน)
+            </span>
+            <span class="text-[12px] font-normal whitespace-nowrap" style="color: var(--color-text-muted)"><b class="text-blue-600">{{ filteredRows.length }}</b> รายการ</span>
+          </div>
+          <table v-if="showAllRows && filteredRows.length" class="w-full text-[12px] border-collapse min-w-[960px]">
+            <thead class="sticky top-0 z-10 bg-gray-50 dark:bg-gray-900" style="border-bottom: 1px solid var(--color-border)">
+              <tr>
+                <th class="px-3 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">เลข PR / วันที่</th>
+                <th class="px-3 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">โครงการ</th>
+                <th class="px-3 py-3 text-left font-medium" style="color: var(--color-text-muted)">รายละเอียด / คู่ค้า</th>
+                <th class="px-3 py-3 text-left font-medium whitespace-nowrap" style="color: var(--color-text-muted)">ผู้จัดซื้อ (มอบหมาย)</th>
+                <th class="px-3 py-3 text-left font-medium" style="color: var(--color-text-muted)">หมายเหตุ</th>
+                <th class="px-3 py-3 text-center font-medium whitespace-nowrap" style="color: var(--color-text-muted)">สถานะ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in filteredRows" :key="prKeyOf(r)" style="border-bottom: 1px solid var(--color-border)" class="hover:bg-blue-50/40 dark:hover:bg-gray-800/40 transition-colors align-top">
+                <td class="px-3 py-3 whitespace-nowrap">
+                  <div class="font-bold font-mono text-blue-600 dark:text-blue-400">{{ r.document_number || r.pr_id || '-' }}</div>
+                  <div class="text-[11px] mt-0.5" style="color: var(--color-text-muted)">{{ r.issue_date || '-' }}</div>
+                  <div class="text-[11px] text-blue-500">{{ calculateDocAge(r.issue_date || r.date) }}</div>
+                </td>
+                <td class="px-3 py-3 max-w-[160px]">
+                  <span class="text-orange-600 dark:text-orange-400 font-semibold text-[11px] line-clamp-2"><i class="fa-solid fa-folder-open mr-1"></i>{{ costCenterOf(r) }}</span>
+                </td>
+                <td class="px-3 py-3 max-w-[280px]">
+                  <div class="font-medium" style="color: var(--color-text-primary)">{{ r.organization || r.email || '-' }}</div>
+                  <div class="text-[11px] mt-0.5 line-clamp-2" style="color: var(--color-text-muted)">{{ cleanNote(r.invoice_note) || '-' }}</div>
+                </td>
+                <td class="px-3 py-3 whitespace-nowrap">
+                  <div class="flex items-center gap-1.5">
+                    <select
+                      :value="assigneeOf(r)"
+                      @change="onAssign(r, $event.target.value)"
+                      class="px-2 py-1.5 rounded-lg text-[12px] border min-w-[140px] focus:outline-none"
+                      :style="{ borderColor: assigneeOf(r) ? '#22c55e' : 'var(--color-border)', background: 'var(--color-bg-card)', color: 'var(--color-text-primary)' }"
+                    >
+                      <option value="">— ยังไม่มอบหมาย —</option>
+                      <option v-if="assigneeOf(r) && !purchaserNames.includes(assigneeOf(r))" :value="assigneeOf(r)">{{ assigneeOf(r) }}</option>
+                      <option v-for="p in PURCHASERS" :key="p.code" :value="p.name">{{ p.name }} ({{ p.code }})</option>
+                    </select>
+                    <i v-if="isSaving(r)" class="fa-solid fa-circle-notch fa-spin text-[12px] text-blue-500"></i>
+                  </div>
+                </td>
+                <td class="px-3 py-3">
+                  <input
+                    :value="trackOf(r).remark || ''"
+                    @change="onRemark(r, $event.target.value)"
+                    type="text"
+                    placeholder="พิมพ์โน้ต..."
+                    class="w-full min-w-[160px] px-2 py-1.5 rounded-lg text-[12px] border focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
+                  />
+                </td>
+                <td class="px-3 py-3 text-center whitespace-nowrap">
+                  <div class="flex flex-col items-center gap-1">
+                    <span class="px-2.5 py-1 rounded-lg text-[11px] font-bold" :style="{ backgroundColor: getBadgeInfo(r.status).bg, color: getBadgeInfo(r.status).color }">
+                      {{ getBadgeInfo(r.status).text }}
+                    </span>
+                    <span v-if="assigneeOf(r)" class="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 whitespace-nowrap">
+                      <i class="fa-solid fa-circle-check mr-0.5"></i>มอบหมายแล้ว
+                    </span>
+                    <span v-else class="px-2 py-0.5 rounded-lg text-[10px] font-medium text-gray-400 whitespace-nowrap">
+                      <i class="fa-regular fa-circle mr-0.5"></i>ยังไม่มอบหมาย
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div v-if="!(selectedCostCenter && selectedCostCenterRows.length) && !(selectedPurchaser && purchaserGroups.length) && !selectedAssignee && !showAllRows" class="h-full flex flex-col items-center justify-center p-12 text-center" style="color: var(--color-text-muted)">
             <i class="fa-solid fa-arrow-up text-3xl mb-3 opacity-20"></i>
             <p>เลือกศูนย์ต้นทุนจากการ์ดด้านบน หรือผู้จัดซื้อจากแผงด้านขวา เพื่อดูรายการ (เลือกได้พร้อมกันทั้งคู่)</p>
           </div>
