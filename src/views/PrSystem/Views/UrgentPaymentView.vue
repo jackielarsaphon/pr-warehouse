@@ -155,42 +155,58 @@ function apPaymentStatus(docNumber) {
   return 'ยังไม่ได้จ่าย'
 }
 
-// --- AP auto-fill ---
-function lookupDoc(docNumber) {
-  const q = docNumber.trim().toLowerCase()
-  if (!q) return null
-  const allRows = [
-    ...trcloudStore.apRows,
-    ...(trcloudStore.poRows || []),
-    ...(trcloudStore.expenseRows || []),
-  ]
-  return allRows.find(r => {
-    const dn = String(
-      r.document_number || r.invoice_number || r.expense_number ||
-      r.doc_number || r.po_number || r.pr_number || ''
-    ).toLowerCase()
-    return dn === q || dn.includes(q) || q.includes(dn.replace(/^(ap|po|pv|exp)\d*/i, ''))
-  }) || null
+// --- AP / PO / EXP auto-fill ---
+
+function docNumberOf(r, type) {
+  if (type === 'po') return String(r.document_number || r.po_id || '').toLowerCase()
+  if (type === 'exp') {
+    const cf = r.company_format || ''
+    const en = r.expense_number || r.invoice_number || r.doc_number || r.id || ''
+    return String(cf ? `${cf}${en}` : en).toLowerCase()
+  }
+  // ap
+  return String(r.document_number || r.invoice_number || '').toLowerCase()
+}
+
+function lookupDoc(q) {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return null
+
+  for (const [type, store] of [
+    ['ap', trcloudStore.apRows],
+    ['po', trcloudStore.poRows],
+    ['exp', trcloudStore.expenseRows],
+  ]) {
+    const found = store.find(r => {
+      const dn = docNumberOf(r, type)
+      return dn === needle || dn.includes(needle) || needle.includes(dn)
+    })
+    if (found) return found
+  }
+  return null
 }
 
 async function onDocNumberInput(row) {
   const q = row.doc_number.trim()
-  if (!q || q.length < 6) return
+  if (!q || q.length < 4) return
   row.searching = true
-  if (!trcloudStore.apRows.length) {
-    await Promise.all([
-      trcloudStore.fetchTrcloudData('ap'),
-      trcloudStore.fetchTrcloudData('po'),
-      trcloudStore.fetchTrcloudData('expense'),
-    ])
-  }
+
+  // fetch แต่ละ type เฉพาะที่ยังไม่มีข้อมูล
+  const fetches = []
+  if (!trcloudStore.apRows.length) fetches.push(trcloudStore.fetchTrcloudData('ap'))
+  if (!trcloudStore.poRows.length) fetches.push(trcloudStore.fetchTrcloudData('po'))
+  if (!trcloudStore.expenseRows.length) fetches.push(trcloudStore.fetchTrcloudData('expense'))
+  if (fetches.length) await Promise.all(fetches)
+
   row.searching = false
   const found = lookupDoc(q)
   if (!found) return
+
   row.vendor = found.organization || found.name || found.supplier || row.vendor
   row.items = found.invoice_note || found.remark || found.note || found.description || found.item_name || row.items
   row.cost_center = found.project || found.project_name || found.department || row.cost_center
-  const cur = (found.currency || found.fx || 'LAK').toString().toUpperCase()
+
+  const cur = String(found.currency || found.fx || 'LAK').toUpperCase()
   const amt = parseFloat(found.grand_total || found.total || 0)
   if (amt > 0) {
     if (cur === 'LAK' || cur === 'KIP') row.kip = String(amt)
@@ -253,6 +269,8 @@ onMounted(() => {
   loadRates()
   loadRows()
   if (!trcloudStore.apRows.length) trcloudStore.fetchTrcloudData('ap')
+  if (!trcloudStore.poRows.length) trcloudStore.fetchTrcloudData('po')
+  if (!trcloudStore.expenseRows.length) trcloudStore.fetchTrcloudData('expense')
   if (!trcloudStore.pvRows.length) trcloudStore.fetchTrcloudData('pv')
 })
 
