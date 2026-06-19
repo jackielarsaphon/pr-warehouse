@@ -217,6 +217,73 @@ async function onDocNumberInput(row) {
   onFieldChange(row)
 }
 
+// --- Bulk paste from Excel ---
+const showPasteModal = ref(false)
+const pasteText = ref('')
+const bulkProgress = ref({ total: 0, done: 0, running: false })
+
+function parsePasteText(text) {
+  // รองรับ copy จาก Excel: แต่ละบรรทัด = 1 เลขเอกสาร (ตัดช่องว่างและบรรทัดเปล่าออก)
+  return text
+    .split(/[\r\n]+/)
+    .map(line => line.trim().split(/\t/)[0].trim()) // ถ้า paste มาหลาย col ให้เอาแค่ col แรก
+    .filter(s => s.length >= 4)
+}
+
+async function applyFillToRow(row) {
+  const q = row.doc_number.trim()
+  if (!q) return
+  const found = lookupDoc(q)
+  if (!found) return
+  row.vendor = found.organization || found.name || found.supplier || row.vendor
+  row.items = found.invoice_note || found.remark || found.note || found.description || found.item_name || row.items
+  row.cost_center = found.project || found.project_name || found.department || row.cost_center
+  const cur = String(found.currency || found.fx || 'LAK').toUpperCase()
+  const amt = parseFloat(found.grand_total || found.total || 0)
+  if (amt > 0) {
+    if (cur === 'LAK' || cur === 'KIP') row.kip = String(amt)
+    else if (cur === 'THB') row.thb = String(amt)
+    else if (cur === 'USD') row.usd = String(amt)
+  }
+  row.autofilled = true
+}
+
+async function confirmBulkPaste() {
+  const docNumbers = parsePasteText(pasteText.value)
+  if (!docNumbers.length) return
+
+  // ตรวจสอบว่าข้อมูล TRCloud โหลดแล้วหรือยัง
+  const fetches = []
+  if (!trcloudStore.apRows.length) fetches.push(trcloudStore.fetchTrcloudData('ap'))
+  if (!trcloudStore.poRows.length) fetches.push(trcloudStore.fetchTrcloudData('po'))
+  if (!trcloudStore.expenseRows.length) fetches.push(trcloudStore.fetchTrcloudData('expense'))
+  if (fetches.length) await Promise.all(fetches)
+
+  showPasteModal.value = false
+  pasteText.value = ''
+
+  bulkProgress.value = { total: docNumbers.length, done: 0, running: true }
+
+  // สร้างแถวและ insert ทีละรายการ (sequential เพื่อไม่ flood Supabase)
+  for (const dn of docNumbers) {
+    const row = newRow()
+    row.doc_number = dn
+    row.searching = true
+    rows.value.push(row)
+
+    await applyFillToRow(row)
+    row.searching = false
+    row.saving = true
+
+    const { error } = await supabase.from(TABLE).insert(toDbPayload(row))
+    row.saving = false
+    if (error) dbError.value = error.message
+
+    bulkProgress.value.done++
+  }
+  bulkProgress.value.running = false
+}
+
 // ประมาณการ THB per row
 function estimatedThb(row) {
   const kip = parseFloat(row.kip || 0)
@@ -311,6 +378,13 @@ onUnmounted(() => {
             style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
           />
         </div>
+        <button
+          @click="showPasteModal = true"
+          class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold border transition"
+          style="border-color: var(--color-border); color: var(--color-text-primary); background: var(--color-bg-card)"
+        >
+          <i class="fa-solid fa-file-excel text-green-600"></i> วางจาก Excel
+        </button>
         <button
           @click="addRow"
           class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold bg-blue-600 text-white hover:bg-blue-700 transition"
@@ -594,6 +668,21 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Bulk progress bar -->
+    <div v-if="bulkProgress.running || bulkProgress.done > 0 && bulkProgress.done < bulkProgress.total"
+      class="flex items-center gap-3 px-4 py-2.5 rounded-xl border text-[12px]"
+      style="background: var(--color-bg-card); border-color: var(--color-border)">
+      <i class="fa-solid fa-circle-notch fa-spin text-blue-500"></i>
+      <span style="color: var(--color-text-muted)">กำลัง auto-fill...</span>
+      <div class="flex-1 rounded-full overflow-hidden h-2" style="background: var(--color-border)">
+        <div class="h-2 bg-blue-500 transition-all"
+          :style="{ width: bulkProgress.total ? (bulkProgress.done / bulkProgress.total * 100) + '%' : '0%' }"></div>
+      </div>
+      <span class="font-mono font-semibold" style="color: var(--color-text-primary)">
+        {{ bulkProgress.done }} / {{ bulkProgress.total }}
+      </span>
+    </div>
+
     <!-- Add row shortcut at bottom -->
     <button @click="addRow"
       class="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border-2 border-dashed text-[13px] font-medium transition hover:border-blue-400 hover:text-blue-500"
@@ -602,6 +691,67 @@ onUnmounted(() => {
     </button>
 
   </div>
+
+  <!-- Paste from Excel Modal -->
+  <Teleport to="body">
+    <div v-if="showPasteModal"
+      class="fixed inset-0 z-50 flex items-center justify-center"
+      style="background: rgba(0,0,0,0.45)"
+      @click.self="showPasteModal = false">
+      <div class="rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
+        style="background: var(--color-bg-card); border: 1px solid var(--color-border)">
+
+        <!-- Modal header -->
+        <div class="flex items-center justify-between px-6 py-4 border-b" style="border-color: var(--color-border)">
+          <div>
+            <h3 class="font-semibold text-[15px]" style="color: var(--color-text-primary)">
+              <i class="fa-solid fa-file-excel text-green-500 mr-2"></i>วางจาก Excel
+            </h3>
+            <p class="text-[12px] mt-0.5" style="color: var(--color-text-muted)">
+              Copy คอลัมน์เลขเอกสาร (AP / PO / EXP) จาก Excel แล้ววางลงด้านล่าง
+            </p>
+          </div>
+          <button @click="showPasteModal = false"
+            class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+            style="color: var(--color-text-muted)">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <!-- Textarea -->
+        <div class="px-6 py-4">
+          <textarea
+            v-model="pasteText"
+            placeholder="วางเลขเอกสารที่นี่ (หนึ่งบรรทัดต่อหนึ่งรายการ)&#10;ตัวอย่าง:&#10;AP26060001&#10;AP26060002&#10;PO26060015"
+            rows="10"
+            class="w-full px-3 py-2.5 rounded-xl border text-[13px] font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+            style="border-color: var(--color-border); background: var(--color-bg-body); color: var(--color-text-primary)"
+          ></textarea>
+          <p class="text-[11px] mt-1.5" style="color: var(--color-text-muted)">
+            พบ <b style="color: var(--color-text-primary)">{{ parsePasteText(pasteText).length }}</b> รายการ
+            <span v-if="parsePasteText(pasteText).length"> — ระบบจะ auto-fill จาก TRCloud ให้อัตโนมัติ</span>
+          </p>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center justify-end gap-3 px-6 py-4 border-t" style="border-color: var(--color-border)">
+          <button @click="showPasteModal = false"
+            class="px-4 py-2 rounded-xl text-[13px] border transition"
+            style="border-color: var(--color-border); color: var(--color-text-muted); background: var(--color-bg-card)">
+            ยกเลิก
+          </button>
+          <button
+            @click="confirmBulkPaste"
+            :disabled="!parsePasteText(pasteText).length"
+            class="flex items-center gap-2 px-5 py-2 rounded-xl text-[13px] font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            นำเข้า {{ parsePasteText(pasteText).length }} รายการ
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
 </template>
 
 <style scoped>
