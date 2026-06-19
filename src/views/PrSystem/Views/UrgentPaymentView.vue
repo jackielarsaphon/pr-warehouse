@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
+import { supabase } from '@/lib/supabase'
 
 const trcloudStore = useTrcloudStore()
 
-const STORAGE_KEY = 'mw-urgent-payment-rows-v1'
+const TABLE = 'urgent_payment_rows'
 const RATE_KEY = 'mw-urgent-payment-rates-v1'
 
 // exchange rates
@@ -27,10 +28,10 @@ const STAFF_LIST = ['Sone', 'Tam', 'Over', 'Tey', 'Chieng', 'LUCK', 'toey', 'luc
 // STATUS: สถานะรับของ
 const STATUS_LIST = ['ตามของ', 'ได้รับของ']
 
-// row template
-function newRow() {
+// row template — id เป็น UUID สำหรับ Supabase
+function newRow(id) {
   return {
-    id: Date.now() + Math.random(),
+    id: id || crypto.randomUUID(),
     doc_number: '',
     vendor: '',
     items: '',
@@ -43,45 +44,90 @@ function newRow() {
     thb: '',
     usd: '',
     staff: '',
-    status: 'ตามของ', // default
+    status: 'ตามของ',
+    // UI only
     autofilled: false,
     searching: false,
+    saving: false,
+  }
+}
+
+function toDbPayload(row) {
+  return {
+    id: row.id,
+    doc_number: row.doc_number,
+    vendor: row.vendor,
+    items: row.items,
+    cost_center: row.cost_center,
+    air_code: row.air_code,
+    reason: row.reason,
+    due_site: row.due_site || null,
+    due_finance: row.due_finance || null,
+    kip: row.kip,
+    thb: row.thb,
+    usd: row.usd,
+    staff: row.staff,
+    status: row.status,
+    updated_at: new Date().toISOString(),
   }
 }
 
 const rows = ref([])
 const search = ref('')
 const paymentFilter = ref('all') // 'all' | 'paid' | 'unpaid'
+const dbLoading = ref(false)
+const dbError = ref('')
 
-function loadRows() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      rows.value = JSON.parse(raw).map(r => ({
-        ...r,
-        status: STATUS_LIST.includes(r.status) ? r.status : 'ตามของ',
-      }))
-    }
-  } catch {}
-  if (!rows.value.length) rows.value = []
+// debounce map: rowId → timeout
+const saveTimers = {}
+
+async function loadRows() {
+  dbLoading.value = true
+  dbError.value = ''
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .order('created_at', { ascending: true })
+  dbLoading.value = false
+  if (error) {
+    dbError.value = error.message
+    return
+  }
+  rows.value = (data || []).map(r => ({
+    ...r,
+    due_site: r.due_site || '',
+    due_finance: r.due_finance || '',
+    status: STATUS_LIST.includes(r.status) ? r.status : 'ตามของ',
+    autofilled: false,
+    searching: false,
+    saving: false,
+  }))
 }
 
-function saveRows() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rows.value))
+async function addRow() {
+  const row = newRow()
+  rows.value.push(row)
+  row.saving = true
+  const { error } = await supabase.from(TABLE).insert(toDbPayload(row))
+  row.saving = false
+  if (error) dbError.value = error.message
 }
 
-function addRow() {
-  rows.value.push(newRow())
-  saveRows()
-}
-
-function deleteRow(id) {
+async function deleteRow(id) {
   rows.value = rows.value.filter(r => r.id !== id)
-  saveRows()
+  const { error } = await supabase.from(TABLE).delete().eq('id', id)
+  if (error) dbError.value = error.message
 }
 
 function onFieldChange(row) {
-  saveRows()
+  // debounce 600ms เพื่อไม่ upsert ทุก keystroke
+  clearTimeout(saveTimers[row.id])
+  saveTimers[row.id] = setTimeout(async () => {
+    row.saving = true
+    const { error } = await supabase.from(TABLE).upsert(toDbPayload(row))
+    row.saving = false
+    if (error) dbError.value = error.message
+  }, 600)
 }
 
 // --- PV payment status ---
@@ -152,7 +198,7 @@ async function onDocNumberInput(row) {
     else if (cur === 'USD') row.usd = String(amt)
   }
   row.autofilled = true
-  saveRows()
+  onFieldChange(row)
 }
 
 // ประมาณการ THB per row
@@ -208,6 +254,11 @@ onMounted(() => {
   loadRows()
   if (!trcloudStore.apRows.length) trcloudStore.fetchTrcloudData('ap')
   if (!trcloudStore.pvRows.length) trcloudStore.fetchTrcloudData('pv')
+})
+
+// ล้าง debounce timers เมื่อ unmount
+onUnmounted(() => {
+  Object.values(saveTimers).forEach(clearTimeout)
 })
 </script>
 
@@ -320,6 +371,13 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- DB error -->
+    <div v-if="dbError" class="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-red-300 bg-red-50 dark:bg-red-900/20 text-[12px] text-red-600">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <span>{{ dbError }}</span>
+      <button @click="dbError = ''" class="ml-auto text-red-400 hover:text-red-600"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
     <!-- Table -->
     <div class="flex-1 min-h-0 rounded-xl border overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
       <div class="overflow-auto h-full">
@@ -346,7 +404,13 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!filteredRows.length">
+            <tr v-if="dbLoading">
+              <td colspan="17" class="px-4 py-16 text-center">
+                <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500 mb-3 block"></i>
+                <span class="text-[13px]" style="color: var(--color-text-muted)">กำลังโหลดข้อมูลจาก Supabase...</span>
+              </td>
+            </tr>
+            <tr v-else-if="!filteredRows.length">
               <td colspan="17" class="px-4 py-16 text-center" style="color: var(--color-text-muted)">
                 <i class="fa-solid fa-table-list text-3xl mb-3 opacity-20 block"></i>
                 <p class="text-[13px]">ยังไม่มีรายการ — กดปุ่ม <b class="text-blue-500">+ เพิ่มรายการ</b> เพื่อเริ่มบันทึก</p>
@@ -361,7 +425,10 @@ onMounted(() => {
               style="border-bottom: 1px solid var(--color-border)"
             >
               <!-- # -->
-              <td class="px-2 py-2.5 text-center text-[11px]" style="color: var(--color-text-muted)">{{ idx + 1 }}</td>
+              <td class="px-2 py-2.5 text-center text-[11px]" style="color: var(--color-text-muted)">
+                <i v-if="row.saving" class="fa-solid fa-circle-notch fa-spin text-blue-400"></i>
+                <span v-else>{{ idx + 1 }}</span>
+              </td>
 
               <!-- เลขที่เอกสาร -->
               <td class="px-2 py-2 whitespace-nowrap">
