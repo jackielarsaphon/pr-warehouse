@@ -25,6 +25,11 @@ const savingKeys = ref(new Set())
 
 const selectedCostCenter = ref(null)
 const selectedPurchaser = ref(null)
+const cardsCollapsed = ref(localStorage.getItem('mw-pr-cards-collapsed') === 'true')
+function toggleCards() {
+  cardsCollapsed.value = !cardsCollapsed.value
+  localStorage.setItem('mw-pr-cards-collapsed', cardsCollapsed.value)
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 function isOutstanding(status) {
@@ -472,44 +477,67 @@ watch(viewMode, (mode) => {
     </div>
 
     <!-- Cost-center cards (เต็มความกว้าง, แสดงทั้งสองโหมด) -->
-    <div class="mb-5">
-          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
-            <div class="text-[13px] font-semibold" style="color: var(--color-text-primary)">
-              ศูนย์ต้นทุน / โครงการ ({{ costCenterCards.length }})
+    <div :class="['rounded-xl border transition-all', cardsCollapsed ? 'mb-3' : 'mb-5']" style="background: var(--color-bg-card); border-color: var(--color-border)">
+      <!-- header row — คลิกเพื่อ collapse -->
+      <div
+        class="flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 cursor-pointer select-none"
+        :class="cardsCollapsed ? '' : 'border-b'"
+        style="border-color: var(--color-border)"
+        @click="toggleCards"
+      >
+        <div class="flex items-center gap-2 text-[13px] font-semibold" style="color: var(--color-text-primary)">
+          <i class="fa-solid fa-layer-group text-orange-500"></i>
+          ศูนย์ต้นทุน / โครงการ ({{ costCenterCards.length }})
+          <span v-if="selectedCostCenter && cardsCollapsed" class="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-[11px] font-medium">
+            <i class="fa-solid fa-folder-open mr-1 text-orange-500"></i>{{ selectedCostCenter }}
+          </span>
+        </div>
+        <div class="flex items-center gap-2 text-[12px]">
+          <span class="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 font-semibold">New {{ totals.newCount }}</span>
+          <span class="px-2.5 py-1 rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 font-semibold">Partial {{ totals.partialCount }}</span>
+          <span class="px-2.5 py-1 rounded-lg border font-semibold" style="border-color: var(--color-border); color: var(--color-text-muted)">รวม {{ totals.total }}</span>
+          <button
+            type="button"
+            class="w-7 h-7 flex items-center justify-center rounded-lg transition hover:bg-gray-100 dark:hover:bg-gray-800"
+            :title="cardsCollapsed ? 'แสดงการ์ด' : 'ซ่อนการ์ด'"
+            style="color: var(--color-text-muted)"
+            @click.stop="toggleCards"
+          >
+            <i class="fa-solid text-[13px]" :class="cardsCollapsed ? 'fa-chevron-down' : 'fa-chevron-up'"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- cards grid -->
+      <div v-if="!cardsCollapsed" class="p-3">
+        <div v-if="loading" class="p-8 text-center">
+          <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500 mb-2"></i>
+          <p class="text-[13px]" style="color: var(--color-text-muted)">กำลังโหลด...</p>
+        </div>
+        <div v-else class="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-3">
+          <div v-if="!costCenterCards.length" class="col-span-full p-8 text-center text-[13px]" style="color: var(--color-text-muted)">ไม่พบข้อมูล</div>
+          <div
+            v-for="c in costCenterCards"
+            :key="c.name"
+            @click="selectCostCenter(c.name)"
+            :class="['rounded-xl border p-3 cursor-pointer transition-all', selectedCostCenter === c.name ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:border-blue-300']"
+            :style="{ background: 'var(--color-bg-card)', ...(selectedCostCenter === c.name ? {} : { borderColor: 'var(--color-border)' }) }"
+          >
+            <div class="font-semibold text-[13px] leading-tight line-clamp-2" style="color: var(--color-text-primary)">
+              <i class="fa-solid fa-folder-open mr-1.5 text-orange-500"></i>{{ c.name }}
             </div>
-            <div class="flex items-center gap-2 text-[12px]">
-              <span class="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 font-semibold">New {{ totals.newCount }}</span>
-              <span class="px-2.5 py-1 rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 font-semibold">Partial {{ totals.partialCount }}</span>
-              <span class="px-2.5 py-1 rounded-lg border font-semibold" style="border-color: var(--color-border); color: var(--color-text-muted)">รวม {{ totals.total }}</span>
+            <div class="flex items-center flex-wrap gap-1.5 mt-2.5">
+              <span class="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">New {{ c.newCount }}</span>
+              <span class="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">Partial {{ c.partialCount }}</span>
+              <span class="px-2 py-0.5 rounded-lg text-[11px] font-bold border" style="border-color: var(--color-border); color: var(--color-text-primary)">รวม {{ c.newCount + c.partialCount }}</span>
+            </div>
+            <div class="flex items-center justify-between mt-2 text-[11px]" style="color: var(--color-text-muted)">
+              <span class="font-mono">{{ formatAmount(c.amount) }} ฿</span>
+              <span class="text-green-600">มอบแล้ว {{ c.assigned }}</span>
             </div>
           </div>
-          <div v-if="loading" class="p-8 text-center rounded-xl border" style="background: var(--color-bg-card); border-color: var(--color-border)">
-            <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500 mb-2"></i>
-            <p class="text-[13px]" style="color: var(--color-text-muted)">กำลังโหลด...</p>
-          </div>
-          <div v-else class="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-3">
-            <div v-if="!costCenterCards.length" class="col-span-full p-8 text-center text-[13px]" style="color: var(--color-text-muted)">ไม่พบข้อมูล</div>
-            <div
-              v-for="c in costCenterCards"
-              :key="c.name"
-              @click="selectCostCenter(c.name)"
-              :class="['rounded-xl border p-3 cursor-pointer transition-all', selectedCostCenter === c.name ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:border-blue-300']"
-              :style="{ background: 'var(--color-bg-card)', ...(selectedCostCenter === c.name ? {} : { borderColor: 'var(--color-border)' }) }"
-            >
-              <div class="font-semibold text-[13px] leading-tight line-clamp-2" style="color: var(--color-text-primary)">
-                <i class="fa-solid fa-folder-open mr-1.5 text-orange-500"></i>{{ c.name }}
-              </div>
-              <div class="flex items-center flex-wrap gap-1.5 mt-2.5">
-                <span class="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">New {{ c.newCount }}</span>
-                <span class="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">Partial {{ c.partialCount }}</span>
-                <span class="px-2 py-0.5 rounded-lg text-[11px] font-bold border" style="border-color: var(--color-border); color: var(--color-text-primary)">รวม {{ c.newCount + c.partialCount }}</span>
-              </div>
-              <div class="flex items-center justify-between mt-2 text-[11px]" style="color: var(--color-text-muted)">
-                <span class="font-mono">{{ formatAmount(c.amount) }} ฿</span>
-                <span class="text-green-600">มอบแล้ว {{ c.assigned }}</span>
-              </div>
-            </div>
-          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Body: รายชื่อคนเปิด PO (ซ้าย) + รายการ PR (ขวา) -->
