@@ -52,19 +52,66 @@ async function loadTracking() {
   trackingMap.value = map
 }
 
+// ลิ้ง AP/PO/EXP → PR number โดยใช้ logic เดียวกับหน้าการเชื่อมโยง
+// AP → ap.po/ap.reference (PO no) → po.reference (PR no)
+// PO → po.reference (PR no)
+// EXP → exp.po/exp.reference (PO no) → po.reference (PR no)
+function resolvePrKey(row) {
+  const docNo = (row.doc_number || '').trim()
+  if (!docNo) return null
+  const needle = docNo.toLowerCase()
+  const norm = v => String(v || '').trim().toLowerCase()
+
+  // ลอง AP ก่อน
+  const ap = trcloudStore.apRows.find(r =>
+    norm(r.document_number || r.invoice_number) === needle
+  )
+  if (ap) {
+    const poRef = String(ap.po || ap.reference || ap.po_number || '').trim()
+    if (poRef) {
+      const po = trcloudStore.poRows.find(r => norm(r.document_number || r.po_id) === poRef.toLowerCase())
+      if (po?.reference) return String(po.reference).trim()
+    }
+    if (ap.pr || ap.pr_number) return String(ap.pr || ap.pr_number).trim()
+    return docNo
+  }
+
+  // ลอง PO
+  const po = trcloudStore.poRows.find(r => norm(r.document_number || r.po_id) === needle)
+  if (po) return po.reference ? String(po.reference).trim() : docNo
+
+  // ลอง EXP
+  const exp = trcloudStore.expenseRows.find(r => {
+    const cf = r.company_format || ''
+    const en = r.expense_number || r.invoice_number || r.doc_number || r.id || ''
+    return norm(cf ? `${cf}${en}` : en) === needle
+  })
+  if (exp) {
+    const poRef = String(exp.po || exp.reference || exp.po_number || '').trim()
+    if (poRef) {
+      const po2 = trcloudStore.poRows.find(r => norm(r.document_number || r.po_id) === poRef.toLowerCase())
+      if (po2?.reference) return String(po2.reference).trim()
+    }
+    return docNo
+  }
+
+  return docNo
+}
+
 function purchaserOf(row) {
-  return trackingMap.value[row.doc_number?.trim()]?.assignee || ''
+  const key = resolvePrKey(row)
+  return key ? (trackingMap.value[key]?.assignee || '') : ''
 }
 
 async function savePurchaser(row, name) {
-  const key = row.doc_number.trim()
+  const key = resolvePrKey(row)
   if (!key) return
+  const prevEntry = trackingMap.value[key]
   // optimistic update
-  trackingMap.value = { ...trackingMap.value, [key]: { ...trackingMap.value[key], assignee: name } }
+  trackingMap.value = { ...trackingMap.value, [key]: { ...prevEntry, assignee: name } }
   const payload = { pr_key: key, assignee: name || null, updated_at: new Date().toISOString() }
-  const existing = trackingMap.value[key]
-  if (existing?.id) {
-    await supabase.from(PR_TRACKING_TABLE).update(payload).eq('id', existing.id)
+  if (prevEntry?.id) {
+    await supabase.from(PR_TRACKING_TABLE).update(payload).eq('id', prevEntry.id)
   } else {
     const { data } = await supabase.from(PR_TRACKING_TABLE).insert(payload).select('id').single()
     if (data?.id) trackingMap.value = { ...trackingMap.value, [key]: { id: data.id, assignee: name } }
