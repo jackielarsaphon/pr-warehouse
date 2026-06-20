@@ -81,6 +81,34 @@ const dbError = ref('')
 // debounce map: rowId → timeout
 const saveTimers = {}
 
+// --- Flag (สีแดง / เลื่อนขึ้นบน) ---
+const FLAGGED_KEY = 'mw-urgent-payment-flagged-v1'
+const flaggedIds = ref([]) // array ของ id ที่ flag (เรียงตามลำดับที่กด)
+
+function loadFlagged() {
+  try {
+    const raw = localStorage.getItem(FLAGGED_KEY)
+    if (raw) flaggedIds.value = JSON.parse(raw)
+  } catch {}
+}
+function saveFlagged() {
+  localStorage.setItem(FLAGGED_KEY, JSON.stringify(flaggedIds.value))
+}
+function isFlagged(id) { return flaggedIds.value.includes(id) }
+function toggleFlag(row) {
+  if (isFlagged(row.id)) {
+    flaggedIds.value = flaggedIds.value.filter(id => id !== row.id)
+  } else {
+    flaggedIds.value = [...flaggedIds.value, row.id]
+  }
+  saveFlagged()
+}
+function unflag(id) {
+  if (!isFlagged(id)) return
+  flaggedIds.value = flaggedIds.value.filter(x => x !== id)
+  saveFlagged()
+}
+
 async function loadRows() {
   dbLoading.value = true
   dbError.value = ''
@@ -388,8 +416,23 @@ const paymentCounts = computed(() => {
   return { paid, unpaid, all: rows.value.length }
 })
 
+// sortedRows: flagged rows first (ตามลำดับที่กด), ตามด้วยปกติ
+const sortedRows = computed(() => {
+  const flagged = filteredRows.value.filter(r => isFlagged(r.id))
+  const normal = filteredRows.value.filter(r => !isFlagged(r.id))
+  flagged.sort((a, b) => flaggedIds.value.indexOf(a.id) - flaggedIds.value.indexOf(b.id))
+  return [...flagged, ...normal]
+})
+
+// เมื่อเปลี่ยนสถานะรับของเป็น "ได้รับของ" → auto-unflag
+function onStatusChange(row) {
+  if (row.status === 'ได้รับของ') unflag(row.id)
+  onFieldChange(row)
+}
+
 onMounted(() => {
   loadRates()
+  loadFlagged()
   loadRows()
   if (!trcloudStore.apRows.length) trcloudStore.fetchTrcloudData('ap')
   if (!trcloudStore.poRows.length) trcloudStore.fetchTrcloudData('po')
@@ -638,16 +681,25 @@ onUnmounted(() => {
             </tr>
 
             <tr
-              v-for="(row, idx) in filteredRows"
+              v-for="(row, idx) in sortedRows"
               :key="row.id"
-              class="transition-colors align-top"
-              :class="row.autofilled ? 'bg-blue-50/30 dark:bg-blue-900/10' : ''"
-              style="border-bottom: 1px solid var(--color-border)"
+              class="transition-all align-top"
+              :style="{
+                borderBottom: '1px solid var(--color-border)',
+                borderLeft: isFlagged(row.id) ? '3px solid #ef4444' : '3px solid transparent',
+                background: isFlagged(row.id) ? 'rgba(239,68,68,0.05)' : (row.autofilled ? 'rgba(59,130,246,0.03)' : ''),
+              }"
             >
-              <!-- # -->
-              <td class="px-2 py-2.5 text-center text-[11px]" style="color: var(--color-text-muted)">
+              <!-- # — คลิกเพื่อ flag/unflag -->
+              <td class="px-2 py-2.5 text-center text-[11px] cursor-pointer select-none" @click="toggleFlag(row)" title="กดเพื่อ mark ด่วน">
                 <i v-if="row.saving" class="fa-solid fa-circle-notch fa-spin text-blue-400"></i>
-                <span v-else>{{ idx + 1 }}</span>
+                <span v-else
+                  class="inline-flex items-center justify-center w-6 h-6 rounded-full font-bold transition-all"
+                  :style="isFlagged(row.id)
+                    ? { background: '#ef4444', color: '#fff', boxShadow: '0 0 0 2px rgba(239,68,68,0.3)' }
+                    : { color: 'var(--color-text-muted)' }">
+                  {{ idx + 1 }}
+                </span>
               </td>
 
               <!-- เลขที่เอกสาร -->
@@ -750,7 +802,7 @@ onUnmounted(() => {
 
               <!-- สถานะ (รับของ) -->
               <td class="px-2 py-2 text-center">
-                <select v-model="row.status" @change="onFieldChange(row)"
+                <select v-model="row.status" @change="onStatusChange(row)"
                   class="px-2 py-1.5 rounded-lg border focus:outline-none text-[12px] w-28 font-semibold"
                   :style="{
                     borderColor: row.status === 'ได้รับของ' ? '#22c55e' : '#f59e0b',
