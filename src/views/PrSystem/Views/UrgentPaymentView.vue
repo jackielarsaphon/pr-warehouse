@@ -23,10 +23,53 @@ function saveRates() {
   localStorage.setItem(RATE_KEY, JSON.stringify(rates.value))
 }
 
-// PURCHASERS list
+// PURCHASERS list (เหมือนกับ PrPurchaseSummaryView — ลิ้งข้อมูลร่วมกัน)
+const PURCHASERS = [
+  { code: 'L2304126',  name: 'สินทะสอน อินทะวง' },
+  { code: 'L26022053', name: 'คำกอง แก้วมะนี' },
+  { code: 'L2602022',  name: 'พอนวิไลสัก ฟองสานุวง' },
+  { code: 'L2605038',  name: 'เกียงสะไหม ไชยะพูมี' },
+  { code: 'L2606013',  name: 'เจียง' },
+  { code: 'L2509101',  name: 'ลัดสะหมี ลาดสะบันดิด' },
+]
+const PURCHASER_NAMES = PURCHASERS.map(p => p.name)
+
+// staff ผู้ลงข้อมูล
 const STAFF_LIST = ['Sone', 'Tam', 'Over', 'Tey', 'Chieng', 'LUCK', 'toey', 'lucky', 'chieng']
 // STATUS: สถานะรับของ
 const STATUS_LIST = ['ตามของ', 'ได้รับของ']
+
+// ─── pr_purchase_tracking (shared table กับ PR Summary) ───────────────────
+const PR_TRACKING_TABLE = 'pr_purchase_tracking'
+const trackingMap = ref({}) // pr_key → { id, assignee }
+
+async function loadTracking() {
+  const { data } = await supabase.from(PR_TRACKING_TABLE).select('id, pr_key, assignee')
+  const map = {}
+  for (const row of data || []) {
+    if (row.pr_key) map[row.pr_key] = { id: row.id, assignee: row.assignee || '' }
+  }
+  trackingMap.value = map
+}
+
+function purchaserOf(row) {
+  return trackingMap.value[row.doc_number?.trim()]?.assignee || ''
+}
+
+async function savePurchaser(row, name) {
+  const key = row.doc_number.trim()
+  if (!key) return
+  // optimistic update
+  trackingMap.value = { ...trackingMap.value, [key]: { ...trackingMap.value[key], assignee: name } }
+  const payload = { pr_key: key, assignee: name || null, updated_at: new Date().toISOString() }
+  const existing = trackingMap.value[key]
+  if (existing?.id) {
+    await supabase.from(PR_TRACKING_TABLE).update(payload).eq('id', existing.id)
+  } else {
+    const { data } = await supabase.from(PR_TRACKING_TABLE).insert(payload).select('id').single()
+    if (data?.id) trackingMap.value = { ...trackingMap.value, [key]: { id: data.id, assignee: name } }
+  }
+}
 
 // row template — id เป็น UUID สำหรับ Supabase
 function newRow(id) {
@@ -364,6 +407,7 @@ function uniqueValuesFor(col) {
   for (const r of rows.value) {
     let v
     if (col === '_payment') v = r.doc_number.trim() ? apPaymentStatus(r.doc_number) : ''
+    else if (col === '_purchaser') v = purchaserOf(r)
     else v = String(r[col] || '').trim()
     if (v) vals.add(v)
   }
@@ -390,6 +434,7 @@ const filteredRows = computed(() => {
     if (!val) continue
     result = result.filter(r => {
       if (col === '_payment') return apPaymentStatus(r.doc_number) === val
+      if (col === '_purchaser') return purchaserOf(r) === val
       return String(r[col] || '').trim() === val
     })
   }
@@ -434,6 +479,7 @@ onMounted(() => {
   loadRates()
   loadFlagged()
   loadRows()
+  loadTracking()
   if (!trcloudStore.apRows.length) trcloudStore.fetchTrcloudData('ap')
   if (!trcloudStore.poRows.length) trcloudStore.fetchTrcloudData('po')
   if (!trcloudStore.expenseRows.length) trcloudStore.fetchTrcloudData('expense')
@@ -641,6 +687,17 @@ onUnmounted(() => {
                 </button>
               </th>
 
+              <!-- ผู้จัดซื้อ (ลิ้งกับ PR Summary) -->
+              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap">
+                <button @click="toggleDropdown('_purchaser', $event)"
+                  class="flex items-center gap-1 group"
+                  :style="{ color: columnFilters._purchaser ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  ผู้จัดซื้อ
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"></i>
+                  <span v-if="columnFilters._purchaser" class="text-[10px] text-blue-500 font-normal ml-0.5">({{ columnFilters._purchaser }})</span>
+                </button>
+              </th>
+
               <!-- สถานะ -->
               <th class="px-3 py-3 text-center font-semibold whitespace-nowrap">
                 <button @click="toggleDropdown('status', $event)"
@@ -674,7 +731,7 @@ onUnmounted(() => {
               </td>
             </tr>
             <tr v-else-if="!filteredRows.length">
-              <td colspan="17" class="px-4 py-16 text-center" style="color: var(--color-text-muted)">
+              <td colspan="18" class="px-4 py-16 text-center" style="color: var(--color-text-muted)">
                 <i class="fa-solid fa-table-list text-3xl mb-3 opacity-20 block"></i>
                 <p class="text-[13px]">ยังไม่มีรายการ — กดปุ่ม <b class="text-blue-500">+ เพิ่มรายการ</b> เพื่อเริ่มบันทึก</p>
               </td>
@@ -797,6 +854,23 @@ onUnmounted(() => {
                   style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)">
                   <option value="">— เลือก —</option>
                   <option v-for="s in STAFF_LIST" :key="s" :value="s">{{ s }}</option>
+                </select>
+              </td>
+
+              <!-- ผู้จัดซื้อ (ลิ้งกับ PR Summary ผ่าน pr_purchase_tracking) -->
+              <td class="px-2 py-2">
+                <select
+                  :value="purchaserOf(row)"
+                  @change="savePurchaser(row, $event.target.value)"
+                  class="px-2 py-1.5 rounded-lg border focus:outline-none text-[12px] w-40"
+                  :style="{
+                    borderColor: purchaserOf(row) ? '#8b5cf6' : 'var(--color-border)',
+                    background: 'var(--color-bg-card)',
+                    color: purchaserOf(row) ? '#8b5cf6' : 'var(--color-text-muted)',
+                    fontWeight: purchaserOf(row) ? '600' : '400',
+                  }">
+                  <option value="">— เลือก —</option>
+                  <option v-for="p in PURCHASERS" :key="p.code" :value="p.name">{{ p.name }}</option>
                 </select>
               </td>
 
