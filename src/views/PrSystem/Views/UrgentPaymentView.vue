@@ -294,7 +294,55 @@ function estimatedThb(row) {
   return total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-// filtered rows (search + payment filter)
+// --- Column filter (Excel-style dropdown) ---
+const columnFilters = ref({})       // { vendor: 'ABC', staff: 'Sone', ... }
+const openDropdownCol = ref(null)   // column key ที่ dropdown กำลังเปิดอยู่
+const dropdownPos = ref({ top: 0, left: 0 })
+
+function toggleDropdown(col, event) {
+  if (openDropdownCol.value === col) { openDropdownCol.value = null; return }
+  const rect = event.currentTarget.getBoundingClientRect()
+  dropdownPos.value = { top: rect.bottom + 4, left: rect.left }
+  openDropdownCol.value = col
+}
+function closeDropdown() { openDropdownCol.value = null }
+
+function setColumnFilter(col, val) {
+  if (val === null) {
+    const f = { ...columnFilters.value }
+    delete f[col]
+    columnFilters.value = f
+  } else {
+    columnFilters.value = { ...columnFilters.value, [col]: val }
+  }
+  closeDropdown()
+}
+
+function clearAllFilters() {
+  columnFilters.value = {}
+  paymentFilter.value = 'all'
+  search.value = ''
+  closeDropdown()
+}
+
+const hasActiveFilters = computed(() =>
+  Object.keys(columnFilters.value).length > 0 ||
+  paymentFilter.value !== 'all' ||
+  search.value.trim() !== ''
+)
+
+function uniqueValuesFor(col) {
+  const vals = new Set()
+  for (const r of rows.value) {
+    let v
+    if (col === '_payment') v = r.doc_number.trim() ? apPaymentStatus(r.doc_number) : ''
+    else v = String(r[col] || '').trim()
+    if (v) vals.add(v)
+  }
+  return [...vals].sort()
+}
+
+// filtered rows (search + payment filter + column filters)
 const filteredRows = computed(() => {
   let result = rows.value
   const q = search.value.trim().toLowerCase()
@@ -308,6 +356,14 @@ const filteredRows = computed(() => {
     result = result.filter(r => apPaymentStatus(r.doc_number) === 'จ่ายแล้ว')
   } else if (paymentFilter.value === 'unpaid') {
     result = result.filter(r => apPaymentStatus(r.doc_number) !== 'จ่ายแล้ว')
+  }
+  // column filters
+  for (const [col, val] of Object.entries(columnFilters.value)) {
+    if (!val) continue
+    result = result.filter(r => {
+      if (col === '_payment') return apPaymentStatus(r.doc_number) === val
+      return String(r[col] || '').trim() === val
+    })
   }
   return result
 })
@@ -378,6 +434,14 @@ onUnmounted(() => {
             style="border-color: var(--color-border); background: var(--color-bg-card); color: var(--color-text-primary)"
           />
         </div>
+        <button
+          v-if="hasActiveFilters"
+          @click="clearAllFilters"
+          class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold border border-red-300 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition"
+          style="background: var(--color-bg-card)"
+        >
+          <i class="fa-solid fa-filter-circle-xmark"></i> ยกเลิก filter
+        </button>
         <button
           @click="showPasteModal = true"
           class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold border transition"
@@ -478,20 +542,84 @@ onUnmounted(() => {
             <tr>
               <th class="px-2 py-3 text-left font-semibold w-10" style="color: var(--color-text-muted)">#</th>
               <th class="px-3 py-3 text-left font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">เลขที่เอกสาร</th>
-              <th class="px-3 py-3 text-left font-semibold" style="color: var(--color-text-muted)">ร้านค้า</th>
+
+              <!-- ร้านค้า -->
+              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap">
+                <button @click="toggleDropdown('vendor', $event)"
+                  class="flex items-center gap-1 group"
+                  :style="{ color: columnFilters.vendor ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  ร้านค้า
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"
+                    :class="columnFilters.vendor ? 'text-blue-500' : ''"></i>
+                  <span v-if="columnFilters.vendor" class="text-[10px] text-blue-500 font-normal ml-0.5">({{ columnFilters.vendor }})</span>
+                </button>
+              </th>
+
               <th class="px-3 py-3 text-left font-semibold" style="color: var(--color-text-muted)">รายการ</th>
-              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">Cost Center</th>
-              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">Air Code</th>
+
+              <!-- Cost Center -->
+              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap">
+                <button @click="toggleDropdown('cost_center', $event)"
+                  class="flex items-center gap-1 group"
+                  :style="{ color: columnFilters.cost_center ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  Cost Center
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"
+                    :class="columnFilters.cost_center ? 'text-blue-500' : ''"></i>
+                  <span v-if="columnFilters.cost_center" class="text-[10px] text-blue-500 font-normal ml-0.5">({{ columnFilters.cost_center }})</span>
+                </button>
+              </th>
+
+              <!-- Air Code -->
+              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap">
+                <button @click="toggleDropdown('air_code', $event)"
+                  class="flex items-center gap-1 group"
+                  :style="{ color: columnFilters.air_code ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  Air Code
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"
+                    :class="columnFilters.air_code ? 'text-blue-500' : ''"></i>
+                </button>
+              </th>
+
               <th class="px-3 py-3 text-left font-semibold" style="color: var(--color-text-muted)">เหตุผล</th>
               <th class="px-3 py-3 text-center font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">กำหนดชำระ<br/><span class="font-normal text-[10px]">(หน้างาน)</span></th>
               <th class="px-3 py-3 text-center font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">การเงิน</th>
               <th class="px-3 py-3 text-right font-semibold whitespace-nowrap text-amber-600" style="border-left: 1px solid var(--color-border)"># KIP</th>
               <th class="px-3 py-3 text-right font-semibold whitespace-nowrap text-green-600"># THB</th>
               <th class="px-3 py-3 text-right font-semibold whitespace-nowrap text-blue-600"># USD</th>
-              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap" style="color: var(--color-text-muted); border-left: 1px solid var(--color-border)">ผู้ลงข้อมูล</th>
-              <th class="px-3 py-3 text-center font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">สถานะ</th>
+
+              <!-- ผู้ลงข้อมูล -->
+              <th class="px-3 py-3 text-left font-semibold whitespace-nowrap" style="border-left: 1px solid var(--color-border)">
+                <button @click="toggleDropdown('staff', $event)"
+                  class="flex items-center gap-1 group"
+                  :style="{ color: columnFilters.staff ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  ผู้ลงข้อมูล
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"></i>
+                  <span v-if="columnFilters.staff" class="text-[10px] text-blue-500 font-normal ml-0.5">({{ columnFilters.staff }})</span>
+                </button>
+              </th>
+
+              <!-- สถานะ -->
+              <th class="px-3 py-3 text-center font-semibold whitespace-nowrap">
+                <button @click="toggleDropdown('status', $event)"
+                  class="flex items-center gap-1 group mx-auto"
+                  :style="{ color: columnFilters.status ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  สถานะ
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"></i>
+                </button>
+              </th>
+
               <th class="px-3 py-3 text-right font-semibold whitespace-nowrap" style="color: var(--color-text-primary)">ประมาณ THB</th>
-              <th class="px-3 py-3 text-center font-semibold whitespace-nowrap" style="color: var(--color-text-muted); border-left: 1px solid var(--color-border)">สถานะการจ่ายเงิน</th>
+
+              <!-- สถานะการจ่ายเงิน -->
+              <th class="px-3 py-3 text-center font-semibold whitespace-nowrap" style="border-left: 1px solid var(--color-border)">
+                <button @click="toggleDropdown('_payment', $event)"
+                  class="flex items-center gap-1 group mx-auto"
+                  :style="{ color: columnFilters._payment ? '#3b82f6' : 'var(--color-text-muted)' }">
+                  สถานะการจ่ายเงิน
+                  <i class="fa-solid fa-chevron-down text-[9px] opacity-60 group-hover:opacity-100 transition"></i>
+                </button>
+              </th>
+
               <th class="px-2 py-3 w-8"></th>
             </tr>
           </thead>
@@ -691,6 +819,49 @@ onUnmounted(() => {
     </button>
 
   </div>
+
+  <!-- Column filter dropdown (teleport to avoid overflow clip) -->
+  <Teleport to="body">
+    <!-- overlay คลิกนอก dropdown ให้ปิด -->
+    <div v-if="openDropdownCol" class="fixed inset-0 z-[199]" @click="closeDropdown"></div>
+
+    <div v-if="openDropdownCol"
+      class="fixed z-[200] rounded-xl shadow-xl border overflow-hidden min-w-[160px] max-w-[240px]"
+      :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px', background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }">
+
+      <!-- Clear filter for this col -->
+      <button
+        v-if="columnFilters[openDropdownCol]"
+        @click="setColumnFilter(openDropdownCol, null)"
+        class="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 border-b transition"
+        :style="{ borderColor: 'var(--color-border)' }">
+        <i class="fa-solid fa-filter-circle-xmark"></i> ล้าง filter
+      </button>
+
+      <!-- ทั้งหมด -->
+      <button
+        @click="setColumnFilter(openDropdownCol, null)"
+        class="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-blue-50 dark:hover:bg-blue-900/20 transition font-medium"
+        :style="{ color: !columnFilters[openDropdownCol] ? '#3b82f6' : 'var(--color-text-muted)' }">
+        <i class="fa-solid fa-list text-[10px]"></i> ทั้งหมด
+      </button>
+
+      <div class="max-h-56 overflow-y-auto">
+        <button
+          v-for="val in uniqueValuesFor(openDropdownCol)"
+          :key="val"
+          @click="setColumnFilter(openDropdownCol, val)"
+          class="w-full flex items-center justify-between gap-2 px-3 py-2 text-[12px] hover:bg-blue-50 dark:hover:bg-blue-900/20 transition text-left"
+          :style="{ color: columnFilters[openDropdownCol] === val ? '#3b82f6' : 'var(--color-text-primary)', fontWeight: columnFilters[openDropdownCol] === val ? '600' : '400' }">
+          <span class="truncate">{{ val }}</span>
+          <i v-if="columnFilters[openDropdownCol] === val" class="fa-solid fa-check text-blue-500 text-[10px] flex-shrink-0"></i>
+        </button>
+        <div v-if="!uniqueValuesFor(openDropdownCol).length" class="px-3 py-3 text-[12px]" style="color: var(--color-text-muted)">
+          ไม่มีข้อมูล
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- Paste from Excel Modal -->
   <Teleport to="body">
