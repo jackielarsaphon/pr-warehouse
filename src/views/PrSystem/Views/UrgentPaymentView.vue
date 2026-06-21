@@ -273,30 +273,40 @@ function apPaymentStatus(docNumber) {
     return s.includes('paid') || s.includes('ชำระแล้ว') || s.includes('complete') || s.includes('success')
   }
 
-  // AP — apRows เก็บ company_format และ invoice_number แยก เช่น "AP" + "26060057"
-  // แต่ doc_number ในหน้า = "AP26060057" รวมกัน → ต้องเช็คทั้ง 2 แบบ
-  const apRow = trcloudStore.apRows.find(r => {
-    const cf = String(r.company_format || '').toLowerCase()
-    const rawNo = String(r.expense_number || r.invoice_number || r.document_number || '').toLowerCase()
-    return rawNo === q || (cf + rawNo) === q
-  })
-  if (apRow) return isPaid(apRow.payment_status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+  // AP — ใช้ apItemRows ซึ่งมี doc_number รวม prefix แล้ว (เช่น "AP26060057")
+  // จากนั้นเอา invoice_number ไปเทียบหา payment_status ใน apRows
+  const apItem = trcloudStore.apItemRows.find(r =>
+    String(r.doc_number || '').toLowerCase() === q
+  )
+  if (apItem) {
+    const invNo = String(apItem.invoice_number || '').toLowerCase()
+    const apRow = trcloudStore.apRows.find(r =>
+      String(r.expense_number || r.invoice_number || r.document_number || '').toLowerCase() === invNo
+    )
+    if (apRow) return isPaid(apRow.payment_status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+    // ถ้าหา apRow ไม่เจอ ให้ใช้ status จาก apItem โดยตรง
+    return isPaid(apItem.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+  }
 
-  // PO — เช่นกัน company_format + document_number
+  // PO — endsWith เพื่อ handle กรณี company_format ไม่อยู่ใน raw data
   const poRow = trcloudStore.poRows.find(r => {
-    const cf = String(r.company_format || '').toLowerCase()
     const rawNo = String(r.document_number || r.po_id || '').toLowerCase()
-    return rawNo === q || (cf + rawNo) === q
+    return rawNo && (rawNo === q || q.endsWith(rawNo))
   })
   if (poRow) return isPaid(poRow.payment_status || poRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
 
-  // EXP
-  const expRow = trcloudStore.expenseRows.find(r => {
-    const cf = r.company_format || ''
-    const en = r.expense_number || r.invoice_number || r.doc_number || r.id || ''
-    return String(cf ? `${cf}${en}` : en).toLowerCase() === q
-  })
-  if (expRow) return isPaid(expRow.payment_status || expRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+  // EXP — ใช้ expenseItemRows ซึ่งมี doc_number รวม prefix แล้ว
+  const expItem = trcloudStore.expenseItemRows.find(r =>
+    String(r.doc_number || '').toLowerCase() === q
+  )
+  if (expItem) {
+    const expRow = trcloudStore.expenseRows.find(r => {
+      const en = String(r.expense_number || r.invoice_number || r.doc_number || '').toLowerCase()
+      return en === String(expItem.invoice_number || '').toLowerCase()
+    })
+    if (expRow) return isPaid(expRow.payment_status || expRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+    return isPaid(expItem.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+  }
 
   return 'ยังไม่ได้จ่าย'
 }
