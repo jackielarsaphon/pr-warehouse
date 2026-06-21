@@ -273,16 +273,21 @@ function apPaymentStatus(docNumber) {
     return s.includes('paid') || s.includes('ชำระแล้ว') || s.includes('complete') || s.includes('success')
   }
 
-  // AP
-  const apRow = trcloudStore.apRows.find(r =>
-    String(r.document_number || r.invoice_number || '').toLowerCase() === q
-  )
+  // AP — apRows เก็บ company_format และ invoice_number แยก เช่น "AP" + "26060057"
+  // แต่ doc_number ในหน้า = "AP26060057" รวมกัน → ต้องเช็คทั้ง 2 แบบ
+  const apRow = trcloudStore.apRows.find(r => {
+    const cf = String(r.company_format || '').toLowerCase()
+    const rawNo = String(r.expense_number || r.invoice_number || r.document_number || '').toLowerCase()
+    return rawNo === q || (cf + rawNo) === q
+  })
   if (apRow) return isPaid(apRow.payment_status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
 
-  // PO
-  const poRow = trcloudStore.poRows.find(r =>
-    String(r.document_number || r.po_id || '').toLowerCase() === q
-  )
+  // PO — เช่นกัน company_format + document_number
+  const poRow = trcloudStore.poRows.find(r => {
+    const cf = String(r.company_format || '').toLowerCase()
+    const rawNo = String(r.document_number || r.po_id || '').toLowerCase()
+    return rawNo === q || (cf + rawNo) === q
+  })
   if (poRow) return isPaid(poRow.payment_status || poRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
 
   // EXP
