@@ -264,12 +264,35 @@ const paidApSet = computed(() => {
 function apPaymentStatus(docNumber) {
   const q = (docNumber || '').trim().toLowerCase()
   if (!q) return null
+
+  // เช็คจาก PV reference ก่อน (ครอบคลุม AP, PO, EXP ที่ถูกดึง PV แล้ว)
   if (paidApSet.value.has(q)) return 'จ่ายแล้ว'
-  // fallback: apRows.payment_status (remain === 0 = ชำระแล้ว)
+
+  const isPaid = st => {
+    const s = String(st || '').toLowerCase()
+    return s.includes('paid') || s.includes('ชำระแล้ว') || s.includes('complete') || s.includes('success')
+  }
+
+  // AP
   const apRow = trcloudStore.apRows.find(r =>
     String(r.document_number || r.invoice_number || '').toLowerCase() === q
   )
-  if (apRow) return apRow.payment_status === 'ชำระแล้ว' ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+  if (apRow) return isPaid(apRow.payment_status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+
+  // PO
+  const poRow = trcloudStore.poRows.find(r =>
+    String(r.document_number || r.po_id || '').toLowerCase() === q
+  )
+  if (poRow) return isPaid(poRow.payment_status || poRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+
+  // EXP
+  const expRow = trcloudStore.expenseRows.find(r => {
+    const cf = r.company_format || ''
+    const en = r.expense_number || r.invoice_number || r.doc_number || r.id || ''
+    return String(cf ? `${cf}${en}` : en).toLowerCase() === q
+  })
+  if (expRow) return isPaid(expRow.payment_status || expRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
+
   return 'ยังไม่ได้จ่าย'
 }
 
@@ -527,10 +550,11 @@ onMounted(() => {
   loadFlagged()
   loadRows()
   loadTracking()
-  if (!trcloudStore.apRows.length) trcloudStore.fetchTrcloudData('ap')
-  if (!trcloudStore.poRows.length) trcloudStore.fetchTrcloudData('po')
-  if (!trcloudStore.expenseRows.length) trcloudStore.fetchTrcloudData('expense')
-  if (!trcloudStore.pvRows.length) trcloudStore.fetchTrcloudData('pv')
+  // re-fetch ทุกครั้งที่เปิดหน้า เพื่อให้สถานะจ่ายเงินอัพเดทเสมอ
+  trcloudStore.fetchTrcloudData('ap')
+  trcloudStore.fetchTrcloudData('po')
+  trcloudStore.fetchTrcloudData('expense')
+  trcloudStore.fetchTrcloudData('pv')
 })
 
 // ล้าง debounce timers เมื่อ unmount
