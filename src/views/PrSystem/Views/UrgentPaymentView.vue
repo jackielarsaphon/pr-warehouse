@@ -295,18 +295,11 @@ function apPaymentStatus(docNumber) {
   })
   if (poRow) return isPaid(poRow.payment_status || poRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
 
-  // EXP — ใช้ expenseItemRows ซึ่งมี doc_number รวม prefix แล้ว
+  // EXP — ถ้าเป็น EXP ให้ถือว่าจ่ายแล้วทุกรายการ
   const expItem = trcloudStore.expenseItemRows.find(r =>
     String(r.doc_number || '').toLowerCase() === q
   )
-  if (expItem) {
-    const expRow = trcloudStore.expenseRows.find(r => {
-      const en = String(r.expense_number || r.invoice_number || r.doc_number || '').toLowerCase()
-      return en === String(expItem.invoice_number || '').toLowerCase()
-    })
-    if (expRow) return isPaid(expRow.payment_status || expRow.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
-    return isPaid(expItem.status) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย'
-  }
+  if (expItem) return 'จ่ายแล้ว'
 
   return 'ยังไม่ได้จ่าย'
 }
