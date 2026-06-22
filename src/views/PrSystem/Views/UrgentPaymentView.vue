@@ -885,13 +885,13 @@ onUnmounted(() => {
                     : { color: 'var(--color-text-muted)' }">
                   {{ idx + 1 }}
                 </span>
-                <!-- tooltip ชื่อเต็มผู้กด flag -->
+                <!-- tooltip ชื่อเต็มผู้กด flag — โผล่ทางขวาเพราะ column อยู่ซ้ายสุด -->
                 <div v-if="isFlagged(row.id) && flaggedBy(row.id)"
-                  class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap pointer-events-none z-50
+                  class="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap pointer-events-none z-50
                          opacity-0 group-hover/flag:opacity-100 transition-opacity"
                   style="background: #1f2937; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.3)">
                   {{ flaggedBy(row.id) }}
-                  <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent" style="border-top-color: #1f2937"></div>
+                  <div class="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent" style="border-right-color: #1f2937"></div>
                 </div>
               </td>
 
