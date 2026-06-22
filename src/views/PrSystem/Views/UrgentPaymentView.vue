@@ -616,7 +616,7 @@ async function syncToSheets() {
     ]
     const payload = {
       headers,
-      rows: rows.value.map(r => {
+      rows: rows.value.filter(r => isFlagged(r.id)).map(r => {
         const approx = (parseFloat(r.kip || 0) / rates.value.KIP) + parseFloat(r.thb || 0) + (parseFloat(r.usd || 0) * rates.value.USD)
         return {
           doc_number: r.doc_number,
@@ -644,7 +644,8 @@ async function syncToSheets() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    syncMsg.value = `✓ Sync แล้ว ${rows.value.length} รายการ`
+    const flaggedCount = rows.value.filter(r => isFlagged(r.id)).length
+    syncMsg.value = `✓ Sync แล้ว ${flaggedCount} รายการจ่ายด่วน`
   } catch (err) {
     syncMsg.value = '✗ Sync ล้มเหลว: ' + (err.message || err)
   } finally {
