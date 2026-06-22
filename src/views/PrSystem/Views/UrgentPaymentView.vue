@@ -599,6 +599,60 @@ onMounted(() => {
   trcloudStore.fetchTrcloudData('pv')
 })
 
+// ─── Sync to Google Sheets ────────────────────────────────────────────────
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbzf9LqZI1Z3oUsiAGYIfR6ZTzvbBCgDnib3JGcegycBeMveHYgA635puXUxR90OB2Gs/exec'
+const syncing = ref(false)
+const syncMsg = ref('')
+
+async function syncToSheets() {
+  syncing.value = true
+  syncMsg.value = ''
+  try {
+    const headers = [
+      'เลขที่เอกสาร', 'ร้านค้า', 'รายการ', 'Cost Center', 'Air Code',
+      'เหตุผล', 'กำหนดชำระ (หน้างาน)', 'การเงิน',
+      '#KIP', '#THB', '#USD', 'ประมาณ THB',
+      'ผู้ลงข้อมูล', 'ผู้จัดซื้อ', 'สถานะ', 'สถานะการจ่ายเงิน',
+    ]
+    const payload = {
+      headers,
+      rows: rows.value.map(r => {
+        const approx = (parseFloat(r.kip || 0) / rates.value.KIP) + parseFloat(r.thb || 0) + (parseFloat(r.usd || 0) * rates.value.USD)
+        return {
+          doc_number: r.doc_number,
+          vendor: r.vendor,
+          items: r.items,
+          cost_center: r.cost_center,
+          air_code: r.air_code,
+          reason: r.reason,
+          due_site: r.due_site,
+          due_finance: r.due_finance,
+          kip: r.kip,
+          thb: r.thb,
+          usd: r.usd,
+          approx_thb: approx ? approx.toFixed(2) : '',
+          staff: r.staff,
+          purchaser: purchaserOf(r),
+          status: r.status,
+          payment_status: apPaymentStatus(r.doc_number) || '',
+        }
+      }),
+    }
+    await fetch(SHEETS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    syncMsg.value = `✓ Sync แล้ว ${rows.value.length} รายการ`
+  } catch (err) {
+    syncMsg.value = '✗ Sync ล้มเหลว: ' + (err.message || err)
+  } finally {
+    syncing.value = false
+    setTimeout(() => { syncMsg.value = '' }, 4000)
+  }
+}
+
 // ล้าง debounce timers เมื่อ unmount
 onUnmounted(() => {
   Object.values(saveTimers).forEach(clearTimeout)
@@ -650,6 +704,20 @@ onUnmounted(() => {
           style="border-color: var(--color-border); color: var(--color-text-primary); background: var(--color-bg-card)"
         >
           <i class="fa-solid fa-file-excel text-green-600"></i> วางจาก Excel
+        </button>
+        <button
+          @click="syncToSheets"
+          :disabled="syncing"
+          class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold border transition"
+          :style="{
+            borderColor: syncMsg.startsWith('✓') ? '#22c55e' : syncMsg.startsWith('✗') ? '#ef4444' : '#34a853',
+            color: syncMsg.startsWith('✓') ? '#22c55e' : syncMsg.startsWith('✗') ? '#ef4444' : '#34a853',
+            background: 'var(--color-bg-card)',
+            opacity: syncing ? 0.7 : 1,
+          }"
+        >
+          <i :class="syncing ? 'fa-solid fa-circle-notch fa-spin' : 'fa-brands fa-google-drive'"></i>
+          {{ syncMsg || 'Sync to Sheets' }}
         </button>
         <button
           @click="addRow"
