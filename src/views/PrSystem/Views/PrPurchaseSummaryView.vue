@@ -217,11 +217,11 @@ const purchaserNames = PURCHASERS.map((p) => p.name)
 
 const selectedPurchaserData = computed(() => purchaserList.value.find((p) => p.name === selectedPurchaser.value) || null)
 
-// จำนวน PR ที่มอบหมายให้แต่ละคน (นับจาก dropdown มอบหมาย)
+// จำนวน PR ที่มอบหมายให้แต่ละคน — นับจาก prRows จริง (ไม่ใช้ trackingMap เพื่อกันนับ AP/EXP key ที่ไม่ใช่ PR)
 const assignedCountByName = computed(() => {
   const m = {}
-  for (const key in trackingMap.value) {
-    const a = (trackingMap.value[key]?.assignee || '').trim()
+  for (const row of prRows.value) {
+    const a = assigneeOf(row)
     if (!a) continue
     m[a] = (m[a] || 0) + 1
   }
