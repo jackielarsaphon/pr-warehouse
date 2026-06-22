@@ -553,7 +553,8 @@ const paymentCounts = computed(() => {
     if (apPaymentStatus(r.doc_number) === 'จ่ายแล้ว') paid++
     else unpaid++
   }
-  return { paid, unpaid, all: rows.value.length, flagged: flaggedIds.value.length }
+  const rowIds = new Set(rows.value.map(r => r.id))
+  return { paid, unpaid, all: rows.value.length, flagged: flaggedIds.value.filter(id => rowIds.has(id)).length }
 })
 
 // sortedRows: flagged rows first (ตามลำดับที่กด), ตามด้วยปกติ
