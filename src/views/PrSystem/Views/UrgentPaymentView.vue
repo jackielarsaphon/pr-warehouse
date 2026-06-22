@@ -171,32 +171,43 @@ const dbError = ref('')
 // debounce map: rowId → timeout
 const saveTimers = {}
 
-// --- Flag (สีแดง / เลื่อนขึ้นบน) ---
-const FLAGGED_KEY = 'mw-urgent-payment-flagged-v1'
-const flaggedIds = ref([]) // array ของ id ที่ flag (เรียงตามลำดับที่กด)
+// --- Flag (สีแดง / เลื่อนขึ้นบน) — เก็บใน Supabase ให้ทุกคนเห็นพร้อมกัน ---
+const FLAGGED_TABLE = 'trcloud_tracking'
+const FLAGGED_DOC_TYPE = 'urgent_flag'
+const flaggedIds = ref([]) // array ของ row.id ที่ flag (เรียงตามลำดับ insert)
+const flagFilter = ref(false) // กรองเฉพาะรายการ "จ่ายด่วน"
 
-function loadFlagged() {
+async function loadFlagged() {
   try {
-    const raw = localStorage.getItem(FLAGGED_KEY)
-    if (raw) flaggedIds.value = JSON.parse(raw)
+    const { data } = await supabase
+      .from(FLAGGED_TABLE)
+      .select('doc_key')
+      .eq('doc_type', FLAGGED_DOC_TYPE)
+      .order('id', { ascending: true })
+    flaggedIds.value = (data || []).map(r => r.doc_key).filter(Boolean)
   } catch {}
 }
-function saveFlagged() {
-  localStorage.setItem(FLAGGED_KEY, JSON.stringify(flaggedIds.value))
-}
 function isFlagged(id) { return flaggedIds.value.includes(id) }
-function toggleFlag(row) {
-  if (isFlagged(row.id)) {
-    flaggedIds.value = flaggedIds.value.filter(id => id !== row.id)
+async function toggleFlag(row) {
+  const id = row.id
+  if (isFlagged(id)) {
+    flaggedIds.value = flaggedIds.value.filter(x => x !== id)
+    await supabase.from(FLAGGED_TABLE).delete()
+      .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
   } else {
-    flaggedIds.value = [...flaggedIds.value, row.id]
+    flaggedIds.value = [...flaggedIds.value, id]
+    // delete ก่อนแล้วค่อย insert เพื่อป้องกัน duplicate
+    await supabase.from(FLAGGED_TABLE).delete()
+      .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
+    await supabase.from(FLAGGED_TABLE)
+      .insert({ doc_type: FLAGGED_DOC_TYPE, doc_key: id, checked: true })
   }
-  saveFlagged()
 }
-function unflag(id) {
+async function unflag(id) {
   if (!isFlagged(id)) return
   flaggedIds.value = flaggedIds.value.filter(x => x !== id)
-  saveFlagged()
+  await supabase.from(FLAGGED_TABLE).delete()
+    .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
 }
 
 async function loadRows() {
@@ -470,11 +481,13 @@ function setColumnFilter(col, val) {
 function clearAllFilters() {
   columnFilters.value = {}
   paymentFilter.value = 'all'
+  flagFilter.value = false
   search.value = ''
   closeDropdown()
 }
 
 const hasActiveFilters = computed(() =>
+  flagFilter.value ||
   Object.keys(columnFilters.value).length > 0 ||
   paymentFilter.value !== 'all' ||
   search.value.trim() !== ''
@@ -492,9 +505,13 @@ function uniqueValuesFor(col) {
   return [...vals].sort()
 }
 
-// filtered rows (search + payment filter + column filters)
+// filtered rows (search + flag filter + payment filter + column filters)
 const filteredRows = computed(() => {
   let result = rows.value
+  // จ่ายด่วน filter: เฉพาะ row ที่ถูก flag
+  if (flagFilter.value) {
+    result = result.filter(r => isFlagged(r.id))
+  }
   const q = search.value.trim().toLowerCase()
   if (q) {
     result = result.filter(r =>
@@ -536,7 +553,7 @@ const paymentCounts = computed(() => {
     if (apPaymentStatus(r.doc_number) === 'จ่ายแล้ว') paid++
     else unpaid++
   }
-  return { paid, unpaid, all: rows.value.length }
+  return { paid, unpaid, all: rows.value.length, flagged: flaggedIds.value.length }
 })
 
 // sortedRows: flagged rows first (ตามลำดับที่กด), ตามด้วยปกติ
@@ -682,6 +699,21 @@ onUnmounted(() => {
           <span class="ml-1.5 font-mono text-[11px] opacity-75">{{ paymentCounts.unpaid }}</span>
         </button>
       </div>
+
+      <!-- จ่ายด่วน filter -->
+      <button
+        @click="flagFilter = !flagFilter"
+        class="flex items-center gap-1.5 px-4 py-2 rounded-xl border text-[12px] font-semibold transition"
+        :style="{
+          background: flagFilter ? '#ef4444' : 'var(--color-bg-card)',
+          borderColor: flagFilter ? '#ef4444' : '#fca5a5',
+          color: flagFilter ? '#fff' : '#ef4444',
+        }"
+      >
+        <i class="fa-solid fa-bolt"></i>
+        จ่ายด่วน
+        <span v-if="paymentCounts.flagged" class="font-mono text-[11px] opacity-80">{{ paymentCounts.flagged }}</span>
+      </button>
 
       <!-- grand total -->
       <div v-if="rows.length" class="flex items-center gap-3 px-4 py-2 rounded-xl border text-[12px] ml-auto" style="background: var(--color-bg-card); border-color: var(--color-border)">
