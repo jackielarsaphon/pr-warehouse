@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
+import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 
 const trcloudStore = useTrcloudStore()
+const auth = useAuthStore()
 
 const TABLE = 'urgent_payment_rows'
 const RATE_KEY = 'mw-urgent-payment-rates-v1'
@@ -175,37 +177,52 @@ const saveTimers = {}
 const FLAGGED_TABLE = 'trcloud_tracking'
 const FLAGGED_DOC_TYPE = 'urgent_flag'
 const flaggedIds = ref([]) // array ของ row.id ที่ flag (เรียงตามลำดับ insert)
+const flaggedByMap = ref({}) // row.id → ชื่อผู้กด flag
 const flagFilter = ref(false) // กรองเฉพาะรายการ "จ่ายด่วน"
 
 async function loadFlagged() {
   try {
     const { data } = await supabase
       .from(FLAGGED_TABLE)
-      .select('doc_key')
+      .select('doc_key, updated_by')
       .eq('doc_type', FLAGGED_DOC_TYPE)
       .order('id', { ascending: true })
     flaggedIds.value = (data || []).map(r => r.doc_key).filter(Boolean)
+    const byMap = {}
+    for (const r of data || []) {
+      if (r.doc_key) byMap[r.doc_key] = r.updated_by || ''
+    }
+    flaggedByMap.value = byMap
   } catch {}
 }
 function isFlagged(id) { return flaggedIds.value.includes(id) }
+function flaggedBy(id) { return flaggedByMap.value[id] || '' }
+
 async function toggleFlag(row) {
   const id = row.id
+  const userName = auth.user?.fullname || auth.user?.username || ''
   if (isFlagged(id)) {
     flaggedIds.value = flaggedIds.value.filter(x => x !== id)
+    const newByMap = { ...flaggedByMap.value }
+    delete newByMap[id]
+    flaggedByMap.value = newByMap
     await supabase.from(FLAGGED_TABLE).delete()
       .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
   } else {
     flaggedIds.value = [...flaggedIds.value, id]
-    // delete ก่อนแล้วค่อย insert เพื่อป้องกัน duplicate
+    flaggedByMap.value = { ...flaggedByMap.value, [id]: userName }
     await supabase.from(FLAGGED_TABLE).delete()
       .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
     await supabase.from(FLAGGED_TABLE)
-      .insert({ doc_type: FLAGGED_DOC_TYPE, doc_key: id, checked: true })
+      .insert({ doc_type: FLAGGED_DOC_TYPE, doc_key: id, checked: true, updated_by: userName })
   }
 }
 async function unflag(id) {
   if (!isFlagged(id)) return
   flaggedIds.value = flaggedIds.value.filter(x => x !== id)
+  const newByMap = { ...flaggedByMap.value }
+  delete newByMap[id]
+  flaggedByMap.value = newByMap
   await supabase.from(FLAGGED_TABLE).delete()
     .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
 }
@@ -553,8 +570,7 @@ const paymentCounts = computed(() => {
     if (apPaymentStatus(r.doc_number) === 'จ่ายแล้ว') paid++
     else unpaid++
   }
-  const rowIds = new Set(rows.value.map(r => r.id))
-  return { paid, unpaid, all: rows.value.length, flagged: flaggedIds.value.filter(id => rowIds.has(id)).length }
+  return { paid, unpaid, all: rows.value.length, flagged: rows.value.filter(r => isFlagged(r.id)).length }
 })
 
 // sortedRows: flagged rows first (ตามลำดับที่กด), ตามด้วยปกติ
@@ -860,15 +876,22 @@ onUnmounted(() => {
               }"
             >
               <!-- # — คลิกเพื่อ flag/unflag -->
-              <td class="px-2 py-2.5 text-center text-[11px] cursor-pointer select-none" @click="toggleFlag(row)" title="กดเพื่อ mark ด่วน">
+              <td class="px-2 py-2.5 text-center text-[11px] cursor-pointer select-none" @click="toggleFlag(row)" :title="isFlagged(row.id) && flaggedBy(row.id) ? 'กด flag โดย ' + flaggedBy(row.id) : 'กดเพื่อ mark ด่วน'">
                 <i v-if="row.saving" class="fa-solid fa-circle-notch fa-spin text-blue-400"></i>
-                <span v-else
-                  class="inline-flex items-center justify-center w-6 h-6 rounded-full font-bold transition-all"
-                  :style="isFlagged(row.id)
-                    ? { background: '#ef4444', color: '#fff', boxShadow: '0 0 0 2px rgba(239,68,68,0.3)' }
-                    : { color: 'var(--color-text-muted)' }">
-                  {{ idx + 1 }}
-                </span>
+                <div v-else class="flex flex-col items-center gap-0.5">
+                  <span
+                    class="inline-flex items-center justify-center w-6 h-6 rounded-full font-bold transition-all"
+                    :style="isFlagged(row.id)
+                      ? { background: '#ef4444', color: '#fff', boxShadow: '0 0 0 2px rgba(239,68,68,0.3)' }
+                      : { color: 'var(--color-text-muted)' }">
+                    {{ idx + 1 }}
+                  </span>
+                  <span v-if="isFlagged(row.id) && flaggedBy(row.id)"
+                    class="text-[9px] leading-none font-medium max-w-[48px] truncate"
+                    style="color: #ef4444">
+                    {{ flaggedBy(row.id).split(' ')[0] }}
+                  </span>
+                </div>
               </td>
 
               <!-- เลขที่เอกสาร -->
