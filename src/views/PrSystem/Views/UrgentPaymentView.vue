@@ -876,21 +876,22 @@ onUnmounted(() => {
               }"
             >
               <!-- # — คลิกเพื่อ flag/unflag -->
-              <td class="px-2 py-2.5 text-center text-[11px] cursor-pointer select-none" @click="toggleFlag(row)" :title="isFlagged(row.id) && flaggedBy(row.id) ? 'กด flag โดย ' + flaggedBy(row.id) : 'กดเพื่อ mark ด่วน'">
+              <td class="px-2 py-2.5 text-center text-[11px] cursor-pointer select-none relative group/flag" @click="toggleFlag(row)">
                 <i v-if="row.saving" class="fa-solid fa-circle-notch fa-spin text-blue-400"></i>
-                <div v-else class="flex flex-col items-center gap-0.5">
-                  <span
-                    class="inline-flex items-center justify-center w-6 h-6 rounded-full font-bold transition-all"
-                    :style="isFlagged(row.id)
-                      ? { background: '#ef4444', color: '#fff', boxShadow: '0 0 0 2px rgba(239,68,68,0.3)' }
-                      : { color: 'var(--color-text-muted)' }">
-                    {{ idx + 1 }}
-                  </span>
-                  <span v-if="isFlagged(row.id) && flaggedBy(row.id)"
-                    class="text-[9px] leading-none font-medium max-w-[48px] truncate"
-                    style="color: #ef4444">
-                    {{ flaggedBy(row.id).split(' ')[0] }}
-                  </span>
+                <span v-else
+                  class="inline-flex items-center justify-center w-6 h-6 rounded-full font-bold transition-all"
+                  :style="isFlagged(row.id)
+                    ? { background: '#ef4444', color: '#fff', boxShadow: '0 0 0 2px rgba(239,68,68,0.3)' }
+                    : { color: 'var(--color-text-muted)' }">
+                  {{ idx + 1 }}
+                </span>
+                <!-- tooltip ชื่อเต็มผู้กด flag -->
+                <div v-if="isFlagged(row.id) && flaggedBy(row.id)"
+                  class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap pointer-events-none z-50
+                         opacity-0 group-hover/flag:opacity-100 transition-opacity"
+                  style="background: #1f2937; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.3)">
+                  {{ flaggedBy(row.id) }}
+                  <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent" style="border-top-color: #1f2937"></div>
                 </div>
               </td>
 
