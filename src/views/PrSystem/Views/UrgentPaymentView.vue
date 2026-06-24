@@ -589,6 +589,39 @@ function onStatusChange(row) {
   onFieldChange(row)
 }
 
+// ─── Supabase Realtime: รับการเปลี่ยนแปลงจาก Sheets webhook ────────────────
+let realtimeChannel = null
+
+function handleRealtimeChange(payload) {
+  if (payload.eventType === 'UPDATE') {
+    const idx = rows.value.findIndex(r => r.id === payload.new.id)
+    if (idx !== -1) {
+      const ui = { autofilled: rows.value[idx].autofilled, searching: rows.value[idx].searching, saving: false }
+      rows.value[idx] = {
+        ...payload.new,
+        due_site: payload.new.due_site || '',
+        due_finance: payload.new.due_finance || '',
+        status: STATUS_LIST.includes(payload.new.status) ? payload.new.status : 'ตามของ',
+        ...ui,
+      }
+    }
+  } else if (payload.eventType === 'INSERT') {
+    if (!rows.value.find(r => r.id === payload.new.id)) {
+      rows.value.push({
+        ...payload.new,
+        due_site: payload.new.due_site || '',
+        due_finance: payload.new.due_finance || '',
+        status: STATUS_LIST.includes(payload.new.status) ? payload.new.status : 'ตามของ',
+        autofilled: false,
+        searching: false,
+        saving: false,
+      })
+    }
+  } else if (payload.eventType === 'DELETE') {
+    rows.value = rows.value.filter(r => r.id !== payload.old.id)
+  }
+}
+
 onMounted(() => {
   loadRates()
   loadFlagged()
@@ -599,6 +632,11 @@ onMounted(() => {
   trcloudStore.fetchTrcloudData('po')
   trcloudStore.fetchTrcloudData('expense')
   trcloudStore.fetchTrcloudData('pv')
+
+  realtimeChannel = supabase
+    .channel('urgent_payment_rows_rt')
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, handleRealtimeChange)
+    .subscribe()
 })
 
 // ─── Sync to Google Sheets ────────────────────────────────────────────────
@@ -663,10 +701,11 @@ function scheduleAutoSync(delay = 1500) {
   autoSyncTimer = setTimeout(() => syncToSheets(), delay)
 }
 
-// ล้าง debounce timers เมื่อ unmount
+// ล้าง timers และ Realtime channel เมื่อ unmount
 onUnmounted(() => {
   Object.values(saveTimers).forEach(clearTimeout)
   clearTimeout(autoSyncTimer)
+  if (realtimeChannel) supabase.removeChannel(realtimeChannel)
 })
 </script>
 
