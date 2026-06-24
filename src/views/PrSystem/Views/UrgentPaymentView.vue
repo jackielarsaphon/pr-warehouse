@@ -202,30 +202,57 @@ async function toggleFlag(row) {
   const id = row.id
   const userName = auth.user?.fullname || auth.user?.username || ''
   if (isFlagged(id)) {
+    // optimistic unflag
+    const prevIds = flaggedIds.value
+    const prevByMap = flaggedByMap.value
     flaggedIds.value = flaggedIds.value.filter(x => x !== id)
     const newByMap = { ...flaggedByMap.value }
     delete newByMap[id]
     flaggedByMap.value = newByMap
-    await supabase.from(FLAGGED_TABLE).delete()
+
+    const { error } = await supabase.from(FLAGGED_TABLE).delete()
       .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
+    if (error) {
+      // rollback
+      flaggedIds.value = prevIds
+      flaggedByMap.value = prevByMap
+      console.error('[flag] delete failed:', error.message, error.code)
+      alert('ลบ flag ไม่สำเร็จ: ' + error.message + '\n\nอาจต้องเปิด RLS Policy DELETE บนตาราง trcloud_tracking')
+      return
+    }
   } else {
     flaggedIds.value = [...flaggedIds.value, id]
     flaggedByMap.value = { ...flaggedByMap.value, [id]: userName }
     await supabase.from(FLAGGED_TABLE).delete()
       .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
-    await supabase.from(FLAGGED_TABLE)
+    const { error } = await supabase.from(FLAGGED_TABLE)
       .insert({ doc_type: FLAGGED_DOC_TYPE, doc_key: id, checked: true, updated_by: userName })
+    if (error) {
+      flaggedIds.value = flaggedIds.value.filter(x => x !== id)
+      console.error('[flag] insert failed:', error.message, error.code)
+      alert('เพิ่ม flag ไม่สำเร็จ: ' + error.message)
+      return
+    }
   }
   scheduleAutoSync(500)
 }
 async function unflag(id) {
   if (!isFlagged(id)) return
+  const prevIds = flaggedIds.value
+  const prevByMap = flaggedByMap.value
   flaggedIds.value = flaggedIds.value.filter(x => x !== id)
   const newByMap = { ...flaggedByMap.value }
   delete newByMap[id]
   flaggedByMap.value = newByMap
-  await supabase.from(FLAGGED_TABLE).delete()
+
+  const { error } = await supabase.from(FLAGGED_TABLE).delete()
     .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
+  if (error) {
+    flaggedIds.value = prevIds
+    flaggedByMap.value = prevByMap
+    console.error('[unflag] delete failed:', error.message, error.code)
+    return
+  }
   scheduleAutoSync(500)
 }
 
