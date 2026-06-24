@@ -620,6 +620,23 @@ function onStatusChange(row) {
 // ─── Supabase Realtime ────────────────────────────────────────────────────
 let realtimeChannel = null
 let flagRealtimeChannel = null
+let trackingRealtimeChannel = null
+
+function handleTrackingRealtimeChange(payload) {
+  if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+    const r = payload.new
+    if (r?.pr_key) {
+      trackingMap.value = { ...trackingMap.value, [r.pr_key]: { id: r.id, assignee: r.assignee || '' } }
+    }
+  } else if (payload.eventType === 'DELETE') {
+    const key = payload.old?.pr_key
+    if (key) {
+      const m = { ...trackingMap.value }
+      delete m[key]
+      trackingMap.value = m
+    }
+  }
+}
 
 // sync flaggedIds/flaggedByMap แบบ real-time เพื่อให้ทุก user เห็นพร้อมกัน
 function handleFlagRealtimeChange(payload) {
@@ -694,6 +711,11 @@ onMounted(() => {
       filter: `doc_type=eq.${FLAGGED_DOC_TYPE}`,
     }, handleFlagRealtimeChange)
     .subscribe()
+
+  trackingRealtimeChannel = supabase
+    .channel('pr_purchase_tracking_rt')
+    .on('postgres_changes', { event: '*', schema: 'public', table: PR_TRACKING_TABLE }, handleTrackingRealtimeChange)
+    .subscribe()
 })
 
 // ─── Sync to Google Sheets ────────────────────────────────────────────────
@@ -764,6 +786,7 @@ onUnmounted(() => {
   clearTimeout(autoSyncTimer)
   if (realtimeChannel) supabase.removeChannel(realtimeChannel)
   if (flagRealtimeChannel) supabase.removeChannel(flagRealtimeChannel)
+  if (trackingRealtimeChannel) supabase.removeChannel(trackingRealtimeChannel)
 })
 </script>
 
