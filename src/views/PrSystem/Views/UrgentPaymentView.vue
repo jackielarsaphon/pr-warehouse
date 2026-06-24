@@ -617,8 +617,29 @@ function onStatusChange(row) {
   onFieldChange(row)
 }
 
-// ─── Supabase Realtime: รับการเปลี่ยนแปลงจาก Sheets webhook ────────────────
+// ─── Supabase Realtime ────────────────────────────────────────────────────
 let realtimeChannel = null
+let flagRealtimeChannel = null
+
+// sync flaggedIds/flaggedByMap แบบ real-time เพื่อให้ทุก user เห็นพร้อมกัน
+function handleFlagRealtimeChange(payload) {
+  if (payload.eventType === 'INSERT') {
+    const id = payload.new?.doc_key
+    if (!id || payload.new?.doc_type !== FLAGGED_DOC_TYPE) return
+    if (!flaggedIds.value.includes(id)) {
+      flaggedIds.value = [...flaggedIds.value, id]
+      flaggedByMap.value = { ...flaggedByMap.value, [id]: payload.new?.updated_by || '' }
+    }
+  } else if (payload.eventType === 'DELETE') {
+    const id = payload.old?.doc_key
+    if (!id) return
+    flaggedIds.value = flaggedIds.value.filter(x => x !== id)
+    const m = { ...flaggedByMap.value }
+    delete m[id]
+    flaggedByMap.value = m
+    scheduleAutoSync(800)
+  }
+}
 
 function handleRealtimeChange(payload) {
   if (payload.eventType === 'UPDATE') {
@@ -664,6 +685,14 @@ onMounted(() => {
   realtimeChannel = supabase
     .channel('urgent_payment_rows_rt')
     .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, handleRealtimeChange)
+    .subscribe()
+
+  flagRealtimeChannel = supabase
+    .channel('trcloud_tracking_flags_rt')
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: FLAGGED_TABLE,
+      filter: `doc_type=eq.${FLAGGED_DOC_TYPE}`,
+    }, handleFlagRealtimeChange)
     .subscribe()
 })
 
@@ -729,11 +758,12 @@ function scheduleAutoSync(delay = 1500) {
   autoSyncTimer = setTimeout(() => syncToSheets(), delay)
 }
 
-// ล้าง timers และ Realtime channel เมื่อ unmount
+// ล้าง timers และ Realtime channels เมื่อ unmount
 onUnmounted(() => {
   Object.values(saveTimers).forEach(clearTimeout)
   clearTimeout(autoSyncTimer)
   if (realtimeChannel) supabase.removeChannel(realtimeChannel)
+  if (flagRealtimeChannel) supabase.removeChannel(flagRealtimeChannel)
 })
 </script>
 
