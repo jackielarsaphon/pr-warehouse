@@ -226,6 +226,7 @@ async function unflag(id) {
   flaggedByMap.value = newByMap
   await supabase.from(FLAGGED_TABLE).delete()
     .eq('doc_type', FLAGGED_DOC_TYPE).eq('doc_key', id)
+  scheduleAutoSync(500)
 }
 
 async function loadRows() {
