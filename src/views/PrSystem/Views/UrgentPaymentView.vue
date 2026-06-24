@@ -216,6 +216,7 @@ async function toggleFlag(row) {
     await supabase.from(FLAGGED_TABLE)
       .insert({ doc_type: FLAGGED_DOC_TYPE, doc_key: id, checked: true, updated_by: userName })
   }
+  scheduleAutoSync(500)
 }
 async function unflag(id) {
   if (!isFlagged(id)) return
@@ -273,6 +274,7 @@ function onFieldChange(row) {
     const { error } = await supabase.from(TABLE).upsert(toDbPayload(row))
     row.saving = false
     if (error) dbError.value = error.message
+    else if (isFlagged(row.id)) scheduleAutoSync(800)
   }, 600)
 }
 
@@ -654,9 +656,17 @@ async function syncToSheets() {
   }
 }
 
+// ─── Auto-sync: trigger syncToSheets whenever flagged rows change ─────────
+let autoSyncTimer = null
+function scheduleAutoSync(delay = 1500) {
+  clearTimeout(autoSyncTimer)
+  autoSyncTimer = setTimeout(() => syncToSheets(), delay)
+}
+
 // ล้าง debounce timers เมื่อ unmount
 onUnmounted(() => {
   Object.values(saveTimers).forEach(clearTimeout)
+  clearTimeout(autoSyncTimer)
 })
 </script>
 
