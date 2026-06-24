@@ -720,6 +720,15 @@ onUnmounted(() => {
           <i :class="syncing ? 'fa-solid fa-circle-notch fa-spin' : 'fa-brands fa-google-drive'"></i>
           {{ syncMsg || 'Sync to Sheets' }}
         </button>
+        <a
+          href="https://docs.google.com/spreadsheets/d/1Wv2F-lEKeYNJH9QgdSGQRvq4vDoEu61DW6jYepytFP0/edit?gid=1314533391#gid=1314533391"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold border transition"
+          style="border-color: #34a853; color: #34a853; background: var(--color-bg-card)"
+        >
+          <i class="fa-solid fa-table-cells"></i> เปิดชีท
+        </a>
         <button
           @click="addRow"
           class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[13px] font-semibold bg-blue-600 text-white hover:bg-blue-700 transition"
