@@ -20,6 +20,14 @@ const selectedStaffName = ref(null)
 const searchQuery = ref('')
 const detailSearchQuery = ref('')
 const displayDateRange = ref({ from: '', to: '' })
+const trackingMode = ref(false)
+
+const TRACKING_STATUSES = ['new', 'partial']
+function isTrackingStatus(status) {
+  if (!status) return false
+  const s = String(status).toLowerCase()
+  return TRACKING_STATUSES.some(t => s.includes(t))
+}
 
 const isOutOfSync = computed(() => {
   return displayDateRange.value.from !== trcloudDateFrom.value || 
@@ -58,18 +66,19 @@ const staffSummary = computed(() => {
         uniqueDocIds: new Set(),
         uniquePoIds: new Set(),
         uniqueApIds: new Set(),
+        trackingDocIds: new Set(),
         totalAmount: 0,
         items: []
       }
     }
-    
+
     // เก็บรายการทั้งหมดลงใน items เสมอ (สำหรับแสดงในตารางรายละเอียด)
     summaryMap[staffName].items.push(row)
 
     // นับจำนวนแบบไม่ซ้ำตามเลขที่เอกสาร
     if (docId && !summaryMap[staffName].uniqueDocIds.has(docId)) {
       summaryMap[staffName].uniqueDocIds.add(docId)
-      
+
       const hasAp = row.expense || row.status?.includes('ชำระแล้ว') || row.status?.includes('AP')
       if (hasAp) {
         summaryMap[staffName].uniqueApIds.add(docId)
@@ -77,7 +86,12 @@ const staffSummary = computed(() => {
         summaryMap[staffName].uniquePoIds.add(docId)
       }
     }
-    
+
+    // นับเฉพาะ status new / partial สำหรับโหมดติดตาม
+    if (docId && isTrackingStatus(row.status)) {
+      summaryMap[staffName].trackingDocIds.add(docId)
+    }
+
     // บวกมูลค่าจาก item_total เสมอสำหรับทุกแถวรายการ
     summaryMap[staffName].totalAmount += parseFloat(row.item_total || 0)
   })
@@ -86,8 +100,12 @@ const staffSummary = computed(() => {
     ...s,
     count: s.uniqueDocIds.size,
     passedCount: s.uniqueApIds.size,
-    notPassedCount: s.uniquePoIds.size
-  })).sort((a, b) => b.count - a.count)
+    notPassedCount: s.uniquePoIds.size,
+    trackingCount: s.trackingDocIds.size,
+  })).sort((a, b) => {
+    if (trackingMode.value) return b.trackingCount - a.trackingCount
+    return b.count - a.count
+  })
 })
 
 const filteredStaffSummary = computed(() => {
@@ -115,6 +133,9 @@ const selectedStaff = computed(() => {
 const staffDetails = computed(() => {
   if (!selectedStaff.value) return []
   let items = selectedStaff.value.items
+  if (trackingMode.value) {
+    items = items.filter(item => isTrackingStatus(item.status))
+  }
   if (detailSearchQuery.value) {
     const q = detailSearchQuery.value.toLowerCase().trim()
     items = items.filter(item => JSON.stringify(item).toLowerCase().includes(q))
@@ -355,8 +376,19 @@ onMounted(async () => {
         <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[14px]" style="color: var(--color-text-muted)"></i>
         <input v-model="searchQuery" type="text" placeholder="ค้นหาชื่อ Staff..." class="w-full pl-9 pr-4 py-1.5 bg-transparent border rounded-lg text-[13px] focus:outline-none" style="border-color: var(--color-border); color: var(--color-text-primary)" />
       </div>
-      <!-- ปุ่มไปหน้าแผนภูมิ ชิดขวา -->
-      <div class="ml-auto">
+      <!-- ปุ่มโหมดติดตาม + ดูแผนภูมิ ชิดขวา -->
+      <div class="ml-auto flex items-center gap-2">
+        <button
+          @click="trackingMode = !trackingMode"
+          class="px-4 py-1.5 rounded-lg text-[13px] font-semibold border transition-all flex items-center gap-1.5"
+          :style="trackingMode
+            ? { background: '#f59e0b', borderColor: '#f59e0b', color: '#fff' }
+            : { borderColor: 'var(--color-border)', color: '#f59e0b', background: 'var(--color-bg-card)' }"
+        >
+          <i class="fa-solid fa-crosshairs"></i>
+          ติดตาม
+          <span v-if="trackingMode" class="text-[10px] opacity-80">(new / partial)</span>
+        </button>
         <button @click="goToTankpo" class="px-4 py-1.5 rounded-lg text-[13px] font-medium border hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center gap-1.5" style="border-color: var(--color-border); color: var(--color-text-muted)">
           <i class="fa-solid fa-chart-bar"></i>
           ดูแผนภูมิ
@@ -408,17 +440,30 @@ onMounted(async () => {
             <div class="flex-1 min-w-0">
               <div class="flex justify-between items-start mb-1">
                 <span class="font-semibold text-[13px] truncate mr-2" :style="{ color: selectedStaff?.name === staff.name ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }">{{ staff.name }}</span>
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400 whitespace-nowrap">
-                  {{ staff.count }} รายการ
+                <span
+                  class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap"
+                  :class="trackingMode ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400' : 'border border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400'"
+                >
+                  {{ trackingMode ? staff.trackingCount : staff.count }} รายการ
                 </span>
               </div>
               <div class="flex justify-between items-center text-[11px]">
                 <div style="color: var(--color-text-muted)">
-                  มูลค่ารวม: <span class="font-mono font-medium">{{ staff.totalAmount.toLocaleString('th-TH', {minimumFractionDigits:2}) }}</span>
+                  <template v-if="trackingMode">
+                    ทั้งหมด: <span class="font-mono font-medium">{{ staff.count }}</span>
+                  </template>
+                  <template v-else>
+                    มูลค่ารวม: <span class="font-mono font-medium">{{ staff.totalAmount.toLocaleString('th-TH', {minimumFractionDigits:2}) }}</span>
+                  </template>
                 </div>
                 <div class="flex gap-2 text-[10px] font-medium">
-                  <span class="text-orange-500">PO: {{ staff.notPassedCount }}</span>
-                  <span class="text-cyan-600">AP: {{ staff.passedCount }}</span>
+                  <template v-if="trackingMode">
+                    <span class="text-amber-500">new/partial: {{ staff.trackingCount }}</span>
+                  </template>
+                  <template v-else>
+                    <span class="text-orange-500">PO: {{ staff.notPassedCount }}</span>
+                    <span class="text-cyan-600">AP: {{ staff.passedCount }}</span>
+                  </template>
                 </div>
               </div>
             </div>
