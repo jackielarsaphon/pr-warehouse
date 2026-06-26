@@ -1,483 +1,515 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
-import { supabase } from '@/lib/supabase'
 
 const trcloudStore = useTrcloudStore()
 const loading = ref(true)
-const trackedData = ref({
-  pr: [],
-  po: [],
-  ap: [],
-  pv: []
-})
-
-const activeTab = ref('pr') // 'pr', 'po', 'ap', 'pv'
-const searchQuery = ref('')
-const viewedTabs = ref([])
+const errorText = ref('')
 const currentTime = ref(new Date())
+const selectedCell = ref(null) // { type, period }
 
-// อัปเดตเวลาทุกนาที
-onMounted(() => {
-  fetchTrackedData()
-  const timer = setInterval(() => {
-    currentTime.value = new Date()
-  }, 60000)
+let clockTimer = null
+
+const DOC_TYPES = [
+  { key: 'pr', label: 'PR', icon: 'fa-file-lines', color: '#3b82f6' },
+  { key: 'po', label: 'PO', icon: 'fa-file-invoice-dollar', color: '#8b5cf6' },
+  { key: 'ap', label: 'AP', icon: 'fa-file-invoice', color: '#f59e0b' },
+  { key: 'pv', label: 'PV', icon: 'fa-money-check-dollar', color: '#10b981' },
+]
+
+const PERIODS = [
+  { key: 'today', label: 'วันนี้', sub: 'เอกสารที่เปิดวันนี้', icon: 'fa-sun' },
+  { key: 'yesterday', label: 'เมื่อวาน', sub: 'เอกสารที่เปิดเมื่อวาน', icon: 'fa-cloud-sun' },
+  { key: 'week', label: '1 อาทิตย์ที่ผ่านมา', sub: '7 วันล่าสุด (รวมวันนี้)', icon: 'fa-calendar-week' },
+  { key: 'month', label: 'เดือนนี้', sub: 'เอกสารที่เปิดทั้งหมดในเดือนนี้', icon: 'fa-calendar-days' },
+]
+
+function ymd(d) {
+  const x = new Date(d)
+  const yyyy = String(x.getFullYear())
+  const mm = String(x.getMonth() + 1).padStart(2, '0')
+  const dd = String(x.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function normalizeDocDate(value) {
+  let raw = String(value || '').trim()
+  if (!raw) return ''
+  if (raw.includes(' ')) raw = raw.split(' ')[0]
+  else if (raw.includes('T')) raw = raw.split('T')[0]
+  if (raw.includes('/')) {
+    const [d, m, y] = raw.split('/')
+    if (y && m && d) return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : ''
+}
+
+function getRowDate(row) {
+  return normalizeDocDate(row.issue_date || row.date || row.payment_date)
+}
+
+function getRowDocNo(row, type) {
+  if (type === 'pr') return row.document_number || row.pr_id || row.reference || '-'
+  if (type === 'po') return row.document_number || row.po_id || row.reference || '-'
+  if (type === 'ap') return row.invoice_number || row.doc_number || row.expense_number || row.reference || '-'
+  return row.document_number || row.pv_id || row.payment_number || row.reference || '-'
+}
+
+function getRowsByType(type) {
+  if (type === 'pr') return trcloudStore.prRows
+  if (type === 'po') return trcloudStore.poRows
+  if (type === 'ap') return trcloudStore.apRows
+  return trcloudStore.pvRows
+}
+
+const dateBounds = computed(() => {
+  const now = new Date()
+  const today = ymd(now)
+  const yesterdayDate = new Date(now)
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+  const yesterday = ymd(yesterdayDate)
+  const weekStartDate = new Date(now)
+  weekStartDate.setDate(weekStartDate.getDate() - 6)
+  const weekStart = ymd(weekStartDate)
+  const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
+  return { today, yesterday, weekStart, monthStart }
 })
 
-function formatCurrentDate(date) {
-  return date.toLocaleDateString('th-TH', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
+function isInPeriod(docDate, period) {
+  if (!docDate) return false
+  const { today, yesterday, weekStart, monthStart } = dateBounds.value
+  if (period === 'today') return docDate === today
+  if (period === 'yesterday') return docDate === yesterday
+  if (period === 'week') return docDate >= weekStart && docDate <= today
+  if (period === 'month') return docDate >= monthStart && docDate <= today
+  return false
 }
 
-function formatCurrentTime(date) {
-  return date.toLocaleTimeString('th-TH', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }) + ' น.'
+function filterRows(type, period) {
+  return getRowsByType(type).filter((row) => isInPeriod(getRowDate(row), period))
 }
 
-function handleTabClick(tab) {
-  activeTab.value = tab
-  if (!viewedTabs.value.includes(tab)) {
-    viewedTabs.value.push(tab)
+const countMatrix = computed(() => {
+  const matrix = {}
+  for (const t of DOC_TYPES) {
+    matrix[t.key] = {}
+    for (const p of PERIODS) {
+      matrix[t.key][p.key] = filterRows(t.key, p.key).length
+    }
+  }
+  return matrix
+})
+
+const periodTotals = computed(() => {
+  const totals = {}
+  for (const p of PERIODS) {
+    totals[p.key] = DOC_TYPES.reduce((sum, t) => sum + (countMatrix.value[t.key]?.[p.key] || 0), 0)
+  }
+  return totals
+})
+
+const typeTotals = computed(() => {
+  const totals = {}
+  for (const t of DOC_TYPES) {
+    totals[t.key] = PERIODS.reduce((sum, p) => sum + (countMatrix.value[t.key]?.[p.key] || 0), 0)
+  }
+  return totals
+})
+
+const grandTotal = computed(() =>
+  DOC_TYPES.reduce((sum, t) => sum + (typeTotals.value[t.key] || 0), 0)
+)
+
+const maxCellCount = computed(() => {
+  let max = 0
+  for (const t of DOC_TYPES) {
+    for (const p of PERIODS) {
+      max = Math.max(max, countMatrix.value[t.key]?.[p.key] || 0)
+    }
+  }
+  return max || 1
+})
+
+const selectedRows = computed(() => {
+  if (!selectedCell.value) return []
+  const { type, period } = selectedCell.value
+  return filterRows(type, period).sort((a, b) => getRowDate(b).localeCompare(getRowDate(a)))
+})
+
+const selectedLabel = computed(() => {
+  if (!selectedCell.value) return ''
+  const t = DOC_TYPES.find((x) => x.key === selectedCell.value.type)
+  const p = PERIODS.find((x) => x.key === selectedCell.value.period)
+  return `${t?.label || ''} — ${p?.label || ''}`
+})
+
+function cellIntensity(count) {
+  if (!count) return 0
+  return Math.max(0.12, Math.min(1, count / maxCellCount.value))
+}
+
+function selectCell(type, period) {
+  const count = countMatrix.value[type]?.[period] || 0
+  if (!count) {
+    selectedCell.value = null
+    return
+  }
+  if (selectedCell.value?.type === type && selectedCell.value?.period === period) {
+    selectedCell.value = null
+  } else {
+    selectedCell.value = { type, period }
   }
 }
 
-// ฟังก์ชันดึงข้อมูลที่ถูก Track จาก Supabase
-async function fetchTrackedData() {
+function isCellSelected(type, period) {
+  return selectedCell.value?.type === type && selectedCell.value?.period === period
+}
+
+function formatCurrentDate(date) {
+  return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
+}
+
+function formatCurrentTime(date) {
+  return date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.'
+}
+
+function formatThaiShortDate(ymdStr) {
+  if (!ymdStr) return '-'
+  const [y, m, d] = ymdStr.split('-').map(Number)
+  if (!y || !m || !d) return ymdStr
+  return new Date(y, m - 1, d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function getMonthRangeLabel() {
+  const { monthStart, today } = dateBounds.value
+  return `${formatThaiShortDate(monthStart)} – ${formatThaiShortDate(today)}`
+}
+
+function getWeekRangeLabel() {
+  const { weekStart, today } = dateBounds.value
+  return `${formatThaiShortDate(weekStart)} – ${formatThaiShortDate(today)}`
+}
+
+async function fetchDashboardData(force = false) {
   loading.value = true
+  errorText.value = ''
   try {
-    // 1. ดึงข้อมูลจาก TRCloud Store ทั้งหมดก่อน
-    const fetchPromises = []
-    if (!trcloudStore.prRows.length) fetchPromises.push(trcloudStore.fetchTrcloudData('pr'))
-    if (!trcloudStore.poRows.length) fetchPromises.push(trcloudStore.fetchTrcloudData('po'))
-    if (!trcloudStore.apRows.length) fetchPromises.push(trcloudStore.fetchTrcloudData('ap'))
-    if (!trcloudStore.pvRows.length) fetchPromises.push(trcloudStore.fetchTrcloudData('pv'))
-    if (fetchPromises.length) await Promise.all(fetchPromises)
+    const now = new Date()
+    const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
+    const today = ymd(now)
+    trcloudStore.dateFrom = monthStart
+    trcloudStore.dateTo = today
 
-    // 2. ดึงข้อมูล doc_key ที่ถูกติ๊ก Tracking จาก Supabase
-    const { data: cloudTracking, error } = await supabase
-      .from('trcloud_tracking')
-      .select('doc_type, doc_key')
-      .eq('checked', true)
+    const isCacheFresh =
+      trcloudStore.lastFetched && Date.now() - new Date(trcloudStore.lastFetched).getTime() < 5 * 60 * 1000
+    const isAnyMissing =
+      !trcloudStore.prRows.length ||
+      !trcloudStore.poRows.length ||
+      !trcloudStore.apRows.length ||
+      !trcloudStore.pvRows.length
 
-    if (error) throw error
-
-    // 3. กรองและจัดกลุ่มข้อมูล พร้อมล้างข้อมูลที่สำเร็จแล้ว
-    const grouped = { pr: [], po: [], ap: [], pv: [] }
-    const keysToUncheck = []
-    
-    cloudTracking.forEach(track => {
-      const type = track.doc_type.toLowerCase()
-      const key = String(track.doc_key)
-      
-      let found = null
-      if (type === 'pr') found = trcloudStore.prRows.find(r => getRowIdentity(r) === key)
-      else if (type === 'po') {
-        // สำหรับ PO ใช้ข้อมูลจาก poItemRows เพื่อให้ได้รายละเอียดสินค้า
-        const items = trcloudStore.poItemRows.filter(r => getRowIdentity(r) === key)
-        if (items.length > 0) {
-          items.forEach(item => {
-            if (!isSuccessStatus(item.status)) grouped.po.push(item)
-            else keysToUncheck.push({ type, key })
-          })
-        }
-        return
-      }
-      else if (type === 'ap') {
-        // สำหรับ AP กรองเอาเฉพาะ "ยังไม่ชำระ"
-        const items = trcloudStore.apItemRows.filter(r => getRowIdentity(r) === key)
-        if (items.length > 0) {
-          items.forEach(item => {
-            if (isUnpaidStatus(item.status)) grouped.ap.push(item)
-            else keysToUncheck.push({ type, key }) // ถ้าสถานะเปลี่ยนเป็นชำระแล้ว ให้เตรียมปลดการติดตาม
-          })
-        }
-        return
-      }
-      else if (type === 'pv') found = trcloudStore.pvRows.find(r => getRowIdentity(r) === key)
-
-      if (found) {
-        if (!isSuccessStatus(found.status)) {
-          grouped[type].push(found)
-        } else {
-          // ถ้าสถานะกลายเป็นสำเร็จแล้ว ให้เก็บ key ไว้เพื่อปลดการติดตามใน Supabase
-          keysToUncheck.push({ type, key })
-        }
-      }
-    });
-
-    // 4. ทำการ Auto-Cleanup ปลดการติดตามรายการที่สำเร็จแล้วใน Supabase อัตโนมัติ
-    if (keysToUncheck.length > 0) {
-      for (const item of keysToUncheck) {
-        await supabase
-          .from('trcloud_tracking')
-          .update({ checked: false })
-          .match({ doc_type: item.type.toUpperCase(), doc_key: item.key })
-      }
+    if (force || !isCacheFresh || isAnyMissing) {
+      await trcloudStore.fetchAll({ force, skipApStatusSync: true })
     }
-
-    trackedData.value = grouped
+    selectedCell.value = null
   } catch (err) {
-    console.error('Failed to fetch tracking data:', err)
+    console.error('Failed to fetch notification dashboard:', err)
+    errorText.value = 'ไม่สามารถดึงข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
   } finally {
     loading.value = false
   }
 }
 
-// ข้อมูลที่ผ่านการกรองค้นหา
-const filteredTrackedData = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return trackedData.value
-
-  const filterFn = (items) => items.filter(item => 
-    JSON.stringify(item).toLowerCase().includes(q)
-  )
-
-  return {
-    pr: filterFn(trackedData.value.pr),
-    po: filterFn(trackedData.value.po),
-    ap: filterFn(trackedData.value.ap),
-    pv: filterFn(trackedData.value.pv)
-  }
-})
-
-function getRowIdentity(row) {
-  return String(row.unique_id || row.document_number || row.po_id || row.pr_id || row.ap_id || row.id || '')
-}
-
-function isSuccessStatus(status) {
-  const s = (status || '').toString().toLowerCase()
-  return s.includes('success') || s.includes('เสร็จสิ้น') || s.includes('เรียบร้อย')
-}
-
-function isUnpaidStatus(status) {
-  const s = (status || '').toString().toLowerCase()
-  return s.includes('ยังไม่') || s.includes('unpaid') || s.includes('ค้าง')
-}
-
-function calculateDocAge(dateStr) {
-  if (!dateStr) return '-'
-  const docDate = new Date(dateStr)
-  if (isNaN(docDate)) return '-'
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  docDate.setHours(0, 0, 0, 0)
-  const diffTime = today - docDate
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
-  return diffDays > 0 ? `${diffDays} วัน` : 'วันนี้'
-}
-
-function getBadgeInfo(status) {
-  if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8' }
-  const s = status.toString().toLowerCase()
-  if (s.includes('ชำระแล้ว') || s.includes('paid') || s.includes('complete') || s.includes('อนุมัติ')) {
-    return { text: status, bg: 'rgba(0,0,0,0.05)', color: '#000000' }
-  }
-  if (s.includes('ยังไม่') || s.includes('ค้าง') || s.includes('unpaid') || s.includes('cancel')) {
-    return { text: status, bg: 'rgba(239,68,68,0.1)', color: '#ef4444' }
-  }
-  return { text: status, bg: 'rgba(0,0,0,0.05)', color: '#666666' }
-}
-
-const totalTrackedCount = computed(() => {
-  return trackedData.value.pr.length + trackedData.value.po.length + trackedData.value.ap.length + trackedData.value.pv.length
-})
-
 onMounted(() => {
-  // fetchTrackedData() // ลบออกเพราะย้ายไปไว้ใน onMounted ด้านบนแล้ว
+  fetchDashboardData()
+  clockTimer = setInterval(() => {
+    currentTime.value = new Date()
+  }, 60000)
+})
+
+onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
 })
 </script>
 
 <template>
   <div class="flex flex-col h-full">
-    <!-- Header Section -->
+    <!-- Header -->
     <div class="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
       <div>
         <h1 class="text-[20px] font-semibold flex items-center gap-2" style="color: var(--color-text-primary)">
           <i class="fa-solid fa-bell text-gray-800 dark:text-white"></i>
           สรุปข้อมูลแจ้งเตือน รายวัน
         </h1>
-        <div class="flex items-center gap-3 mt-1">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
           <p class="text-[13px]" style="color: var(--color-text-muted)">
             <i class="fa-regular fa-calendar-check mr-1"></i>
-            ประจำวันที่: {{ formatCurrentDate(currentTime) }}
+            {{ formatCurrentDate(currentTime) }}
           </p>
-          <span class="w-1 h-1 bg-gray-300 rounded-full"></span>
+          <span class="w-1 h-1 bg-gray-300 rounded-full hidden sm:block"></span>
           <p class="text-[13px]" style="color: var(--color-text-muted)">
             <i class="fa-regular fa-clock mr-1"></i>
-            เวลาแจ้งเตือนล่าสุด: {{ formatCurrentTime(currentTime) }}
+            อัปเดตล่าสุด: {{ formatCurrentTime(currentTime) }}
           </p>
         </div>
       </div>
-      
-      <div class="flex items-center gap-3">
-        <div class="relative min-w-[300px]">
-          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[14px]" style="color: var(--color-text-muted)"></i>
-          <input 
-            v-model="searchQuery" 
-            type="text" 
-            placeholder="ค้นหาเลขที่เอกสาร, คู่ค้า, Staff..." 
-            class="w-full pl-9 pr-4 py-2 bg-white dark:bg-gray-800 border rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-gray-400 transition-all" 
-            style="border-color: var(--color-border); color: var(--color-text-primary)" 
-          />
-        </div>
-        <button @click="fetchTrackedData" :disabled="loading" class="px-4 py-2 rounded-lg text-[13px] font-medium bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-50 transition-colors flex items-center gap-2">
-          <i class="fa-solid fa-rotate" :class="loading ? 'fa-spin' : ''"></i>
-          อัปเดต
-        </button>
-      </div>
-    </div>
 
-    <!-- Summary Navigation (Unified Bar) -->
-    <div class="flex items-center gap-2 p-1 bg-gray-100 dark:bg-gray-800/50 rounded-xl mb-8 w-fit border border-gray-200 dark:border-gray-700">
-      <button 
-        v-for="type in ['pr', 'po', 'ap', 'pv']" 
-        :key="type"
-        @click="handleTabClick(type)"
-        :class="['px-5 py-2 rounded-lg text-[13px] font-semibold transition-all flex items-center gap-2 uppercase', activeTab === type ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']"
+      <button
+        type="button"
+        :disabled="loading"
+        class="px-4 py-2 rounded-lg text-[13px] font-medium bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        @click="fetchDashboardData(true)"
       >
-        <i 
-          :class="[
-            'fa-solid', 
-            type === 'pr' ? 'fa-file-lines' : type === 'po' ? 'fa-file-invoice-dollar' : type === 'ap' ? 'fa-file-invoice' : 'fa-money-check-dollar',
-            (trackedData[type].length > 0 && !viewedTabs.includes(type)) ? 'text-red-500 animate-shake-infinite' : ''
-          ]"
-        ></i>
-        <span>{{ type }}</span>
-        <span :class="['px-2 py-0.5 rounded-full text-[11px]', trackedData[type].length > 0 ? 'bg-red-500 text-white' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-400']">
-          {{ trackedData[type].length }}
-        </span>
+        <i class="fa-solid fa-rotate" :class="loading ? 'fa-spin' : ''"></i>
+        อัปเดตข้อมูล
       </button>
     </div>
 
-    <!-- Tables Section -->
-    <div class="flex-1 overflow-auto space-y-8 pr-2">
-      <div v-if="loading" class="py-20 text-center">
-        <i class="fa-solid fa-circle-notch fa-spin text-3xl text-gray-400 mb-4"></i>
-        <p style="color: var(--color-text-muted)">กำลังประมวลผลข้อมูลแจ้งเตือน...</p>
+    <div
+      v-if="errorText"
+      class="mb-4 rounded-xl border p-3 text-[13px]"
+      style="border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.06); color: #b91c1c"
+    >
+      {{ errorText }}
+    </div>
+
+    <!-- Period summary cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      <div
+        v-for="p in PERIODS"
+        :key="p.key"
+        class="rounded-xl border p-4 transition-shadow hover:shadow-md"
+        style="background: var(--color-bg-card); border-color: var(--color-border)"
+      >
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <p class="text-[12px] font-medium" style="color: var(--color-text-muted)">{{ p.label }}</p>
+            <p class="text-[11px] mt-0.5" style="color: var(--color-text-muted)">{{ p.sub }}</p>
+          </div>
+          <div
+            class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+            style="background: rgba(59, 130, 246, 0.1)"
+          >
+            <i class="fa-solid text-[14px] text-blue-600" :class="p.icon"></i>
+          </div>
+        </div>
+        <p class="text-[28px] font-bold mt-3 leading-none" style="color: var(--color-text-primary)">
+          {{ loading ? '—' : periodTotals[p.key] }}
+          <span class="text-[13px] font-normal" style="color: var(--color-text-muted)">ฉบับ</span>
+        </p>
+        <p v-if="p.key === 'week' && !loading" class="text-[11px] mt-2" style="color: var(--color-text-muted)">
+          {{ getWeekRangeLabel() }}
+        </p>
+        <p v-else-if="p.key === 'month' && !loading" class="text-[11px] mt-2" style="color: var(--color-text-muted)">
+          {{ getMonthRangeLabel() }}
+        </p>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div v-if="loading" class="py-20 text-center">
+      <i class="fa-solid fa-circle-notch fa-spin text-3xl text-gray-400 mb-4"></i>
+      <p style="color: var(--color-text-muted)">กำลังดึงข้อมูลเอกสาร...</p>
+    </div>
+
+    <template v-else>
+      <!-- Matrix table -->
+      <div
+        class="rounded-xl border overflow-hidden mb-6"
+        style="background: var(--color-bg-card); border-color: var(--color-border)"
+      >
+        <div class="px-4 py-3 border-b flex items-center justify-between" style="border-color: var(--color-border)">
+          <h2 class="text-[14px] font-semibold" style="color: var(--color-text-primary)">
+            <i class="fa-solid fa-table-columns mr-2 text-gray-500"></i>
+            สรุปจำนวนเอกสารแยกตามประเภทและช่วงเวลา
+          </h2>
+          <span class="text-[12px]" style="color: var(--color-text-muted)">
+            คลิกตัวเลขเพื่อดูรายละเอียด
+          </span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-[13px] border-collapse min-w-[640px]">
+            <thead>
+              <tr style="background: var(--color-bg-muted, rgba(0,0,0,0.02)); border-bottom: 1px solid var(--color-border)">
+                <th class="px-4 py-3 text-left font-semibold w-[140px]" style="color: var(--color-text-muted)">ประเภท</th>
+                <th
+                  v-for="p in PERIODS"
+                  :key="p.key"
+                  class="px-4 py-3 text-center font-semibold"
+                  style="color: var(--color-text-muted)"
+                >
+                  {{ p.label }}
+                </th>
+                <th class="px-4 py-3 text-center font-semibold" style="color: var(--color-text-muted)">รวม</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="t in DOC_TYPES"
+                :key="t.key"
+                style="border-bottom: 1px solid var(--color-border)"
+              >
+                <td class="px-4 py-3">
+                  <div class="flex items-center gap-2 font-semibold" style="color: var(--color-text-primary)">
+                    <i class="fa-solid w-4 text-center" :class="t.icon" :style="{ color: t.color }"></i>
+                    {{ t.label }}
+                  </div>
+                </td>
+                <td
+                  v-for="p in PERIODS"
+                  :key="p.key"
+                  class="px-4 py-3 text-center"
+                >
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center min-w-[48px] px-3 py-1.5 rounded-lg font-bold text-[15px] transition-all"
+                    :class="isCellSelected(t.key, p.key) ? 'ring-2 ring-blue-500 ring-offset-1' : 'hover:scale-105'"
+                    :style="{
+                      backgroundColor: countMatrix[t.key][p.key]
+                        ? `rgba(${t.key === 'pr' ? '59,130,246' : t.key === 'po' ? '139,92,246' : t.key === 'ap' ? '245,158,11' : '16,185,129'}, ${cellIntensity(countMatrix[t.key][p.key])})`
+                        : 'rgba(148,163,184,0.08)',
+                      color: countMatrix[t.key][p.key] ? (t.key === 'ap' ? '#92400e' : t.color) : 'var(--color-text-muted)',
+                      cursor: countMatrix[t.key][p.key] ? 'pointer' : 'default',
+                    }"
+                    :disabled="!countMatrix[t.key][p.key]"
+                    @click="selectCell(t.key, p.key)"
+                  >
+                    {{ countMatrix[t.key][p.key] }}
+                  </button>
+                </td>
+                <td class="px-4 py-3 text-center font-bold" style="color: var(--color-text-primary)">
+                  {{ typeTotals[t.key] }}
+                </td>
+              </tr>
+              <tr style="background: rgba(0,0,0,0.02); border-top: 2px solid var(--color-border)">
+                <td class="px-4 py-3 font-bold" style="color: var(--color-text-primary)">รวมทั้งหมด</td>
+                <td
+                  v-for="p in PERIODS"
+                  :key="p.key"
+                  class="px-4 py-3 text-center font-bold text-[15px]"
+                  style="color: var(--color-text-primary)"
+                >
+                  {{ periodTotals[p.key] }}
+                </td>
+                <td class="px-4 py-3 text-center font-bold text-[16px] text-blue-600">
+                  {{ grandTotal }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <template v-else>
-        <!-- PR Section -->
-        <div v-if="activeTab === 'pr'" class="space-y-3 h-full">
-          <template v-if="filteredTrackedData.pr.length">
-            <div class="flex items-center gap-2 px-1">
-              <span class="w-1.5 h-5 bg-gray-900 dark:bg-white rounded-full"></span>
-              <h2 class="font-bold text-gray-800 dark:text-gray-100">รายการ PR ({{ filteredTrackedData.pr.length }})</h2>
-            </div>
-            <div class="rounded-xl border overflow-hidden bg-white dark:bg-gray-950 shadow-sm" style="border-color: var(--color-border)">
-              <table class="w-full text-[13px] border-collapse">
-                <thead class="bg-gray-50 dark:bg-gray-900/50" style="border-bottom: 1px solid var(--color-border)">
-                  <tr>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">เลขที่เอกสาร</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">วันที่</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">อายุเอกสาร</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">โครงการ</th>
-                    <th class="px-4 py-3 text-right font-medium text-gray-500">สถานะ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="r in filteredTrackedData.pr" :key="getRowIdentity(r)" class="border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors" style="border-color: var(--color-border)">
-                    <td class="px-4 py-3 font-mono font-medium text-gray-900 dark:text-white">{{ r.document_number || r.pr_id }}</td>
-                    <td class="px-4 py-3">{{ r.issue_date || r.date }}</td>
-                    <td class="px-4 py-3 font-medium text-red-500">{{ calculateDocAge(r.issue_date || r.date) }}</td>
-                    <td class="px-4 py-3">{{ r.staff || '-' }}</td>
-                    <td class="px-4 py-3">{{ r.project || '-' }}</td>
-                    <td class="px-4 py-3 text-right">
-                      <span class="px-2 py-1 rounded-lg text-[11px] font-medium" :style="{ backgroundColor: getBadgeInfo(r.status).bg, color: getBadgeInfo(r.status).color }">
-                        {{ getBadgeInfo(r.status).text }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </template>
-          <div v-else class="h-full flex flex-col items-center justify-center py-20 text-center">
-            <i class="fa-solid fa-bell-slash text-4xl mb-4 opacity-10"></i>
-            <p class="text-[15px] font-medium" style="color: var(--color-text-muted)">ไม่มีข้อความแจ้งเตือน</p>
+      <!-- Type breakdown bars -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <div
+          v-for="t in DOC_TYPES"
+          :key="t.key"
+          class="rounded-xl border p-4"
+          style="background: var(--color-bg-card); border-color: var(--color-border); border-left: 4px solid"
+          :style="{ borderLeftColor: t.color }"
+        >
+          <div class="flex items-center gap-2 mb-3">
+            <i class="fa-solid" :class="t.icon" :style="{ color: t.color }"></i>
+            <span class="text-[13px] font-semibold" style="color: var(--color-text-primary)">{{ t.label }}</span>
+            <span class="ml-auto text-[18px] font-bold" :style="{ color: t.color }">{{ typeTotals[t.key] }}</span>
           </div>
-        </div>
-
-        <!-- PO Section -->
-        <div v-if="activeTab === 'po'" class="space-y-3 h-full">
-          <template v-if="filteredTrackedData.po.length">
-            <div class="flex items-center gap-2 px-1">
-              <span class="w-1.5 h-5 bg-gray-900 dark:bg-white rounded-full"></span>
-              <h2 class="font-bold text-gray-800 dark:text-gray-100">รายการ PO ({{ filteredTrackedData.po.length }})</h2>
-            </div>
-            <div class="rounded-xl border overflow-hidden bg-white dark:bg-gray-950 shadow-sm" style="border-color: var(--color-border)">
-              <div class="overflow-x-auto">
-                <table class="w-full text-[12px] border-collapse min-w-[1200px]">
-                  <thead class="bg-gray-50 dark:bg-gray-900/50 text-gray-500 font-medium" style="border-bottom: 1px solid var(--color-border)">
-                    <tr>
-                      <th class="px-3 py-3 text-left">เลขที่เอกสาร</th>
-                      <th class="px-3 py-3 text-left">วันที่</th>
-                      <th class="px-3 py-3 text-left">อายุ (วัน)</th>
-                      <th class="px-3 py-3 text-left">คู่ค้า</th>
-                      <th class="px-3 py-3 text-left">รายการสินค้า / คำอธิบาย</th>
-                      <th class="px-3 py-3 text-center">จำนวน</th>
-                      <th class="px-3 py-3 text-right">ราคา/หน่วย</th>
-                      <th class="px-3 py-3 text-right">ยอดรวม</th>
-                      <th class="px-3 py-3 text-right">สถานะ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="r in filteredTrackedData.po" :key="getRowIdentity(r)" class="border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors" style="border-color: var(--color-border)">
-                      <td class="px-3 py-3 font-mono font-medium text-purple-600">{{ r.doc_number || r.po_id }}</td>
-                      <td class="px-3 py-3 whitespace-nowrap">{{ r.issue_date || r.date }}</td>
-                      <td class="px-3 py-3 font-medium text-red-500">{{ calculateDocAge(r.issue_date || r.date) }}</td>
-                      <td class="px-3 py-3 max-w-[150px] truncate" :title="r.organization">{{ r.organization || '-' }}</td>
-                      <td class="px-3 py-3 max-w-[200px] truncate" :title="r.item_name">{{ r.item_name || '-' }}</td>
-                      <td class="px-3 py-3 text-center">{{ r.quantity }} {{ r.unit }}</td>
-                      <td class="px-3 py-3 text-right font-mono">{{ Number(r.price || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}</td>
-                      <td class="px-3 py-3 text-right font-mono font-bold">{{ Number(r.item_total || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}</td>
-                      <td class="px-3 py-3 text-right">
-                        <span class="px-2 py-1 rounded-lg text-[10px] font-medium" :style="{ backgroundColor: getBadgeInfo(r.status).bg, color: getBadgeInfo(r.status).color }">
-                          {{ getBadgeInfo(r.status).text }}
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+          <div class="space-y-2">
+            <div v-for="p in PERIODS" :key="p.key" class="flex items-center gap-2">
+              <span class="text-[11px] w-[72px] shrink-0 truncate" style="color: var(--color-text-muted)">{{ p.label }}</span>
+              <div class="flex-1 h-2 rounded-full overflow-hidden" style="background: rgba(148,163,184,0.15)">
+                <div
+                  class="h-full rounded-full transition-all duration-500"
+                  :style="{
+                    width: periodTotals[p.key] ? `${(countMatrix[t.key][p.key] / Math.max(...PERIODS.map(x => periodTotals[x.key]), 1)) * 100}%` : '0%',
+                    backgroundColor: t.color,
+                    opacity: countMatrix[t.key][p.key] ? 0.85 : 0.2,
+                  }"
+                ></div>
               </div>
+              <span class="text-[12px] font-semibold w-6 text-right" style="color: var(--color-text-primary)">
+                {{ countMatrix[t.key][p.key] }}
+              </span>
             </div>
-          </template>
-          <div v-else class="h-full flex flex-col items-center justify-center py-20 text-center">
-            <i class="fa-solid fa-bell-slash text-4xl mb-4 opacity-10"></i>
-            <p class="text-[15px] font-medium" style="color: var(--color-text-muted)">ไม่มีข้อความแจ้งเตือน</p>
           </div>
         </div>
+      </div>
 
-        <!-- AP Section -->
-        <div v-if="activeTab === 'ap'" class="space-y-3 h-full">
-          <template v-if="filteredTrackedData.ap.length">
-            <div class="flex items-center gap-2 px-1">
-              <span class="w-1.5 h-5 bg-gray-900 dark:bg-white rounded-full"></span>
-              <h2 class="font-bold text-gray-800 dark:text-gray-100">รายการ AP เฉพาะ "ยังไม่ชำระ" ({{ filteredTrackedData.ap.length }})</h2>
-            </div>
-            <div class="rounded-xl border overflow-hidden bg-white dark:bg-gray-950 shadow-sm" style="border-color: var(--color-border)">
-              <div class="overflow-x-auto">
-                <table class="w-full text-[12px] border-collapse min-w-[1200px]">
-                  <thead class="bg-gray-50 dark:bg-gray-900/50 text-gray-500 font-medium" style="border-bottom: 1px solid var(--color-border)">
-                    <tr>
-                      <th class="px-3 py-3 text-left">เลขที่เอกสาร</th>
-                      <th class="px-3 py-3 text-left">อ้างอิง PO</th>
-                      <th class="px-3 py-3 text-left">วันที่</th>
-                      <th class="px-3 py-3 text-left">อายุ (วัน)</th>
-                      <th class="px-3 py-3 text-left">คู่ค้า</th>
-                      <th class="px-3 py-3 text-left">รายการสินค้า / คำอธิบาย</th>
-                      <th class="px-3 py-3 text-center">จำนวน</th>
-                      <th class="px-3 py-3 text-right">ราคา/หน่วย</th>
-                      <th class="px-3 py-3 text-right">ยอดรวม</th>
-                      <th class="px-3 py-3 text-right">ยอดที่ชำระ</th>
-                      <th class="px-3 py-3 text-right">สถานะ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="r in filteredTrackedData.ap" :key="getRowIdentity(r)" class="border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors" style="border-color: var(--color-border)">
-                      <td class="px-3 py-3 font-mono font-medium text-gray-900 dark:text-white">{{ r.doc_number || r.invoice_number }}</td>
-                      <td class="px-3 py-3 font-mono text-gray-500">{{ r.ref_po || '-' }}</td>
-                      <td class="px-3 py-3 whitespace-nowrap">{{ r.issue_date }}</td>
-                      <td class="px-3 py-3 font-medium text-red-500">{{ calculateDocAge(r.issue_date) }}</td>
-                      <td class="px-3 py-3 max-w-[150px] truncate" :title="r.organization">{{ r.organization || '-' }}</td>
-                      <td class="px-3 py-3 max-w-[200px] truncate" :title="r.item_name">{{ r.item_name || '-' }}</td>
-                      <td class="px-3 py-3 text-center">{{ r.quantity }} {{ r.unit }}</td>
-                      <td class="px-3 py-3 text-right font-mono">{{ Number(r.price || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}</td>
-                      <td class="px-3 py-3 text-right font-mono font-bold">{{ Number(r.item_total || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}</td>
-                      <td class="px-3 py-3 text-right font-mono text-emerald-600">{{ Number(r.payment || 0).toLocaleString('th-TH', {minimumFractionDigits:2}) }}</td>
-                      <td class="px-3 py-3 text-right">
-                        <span class="px-2 py-1 rounded-lg text-[10px] font-medium" :style="{ backgroundColor: getBadgeInfo(r.status).bg, color: getBadgeInfo(r.status).color }">
-                          {{ getBadgeInfo(r.status).text }}
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </template>
-          <div v-else class="h-full flex flex-col items-center justify-center py-20 text-center">
-            <i class="fa-solid fa-bell-slash text-4xl mb-4 opacity-10"></i>
-            <p class="text-[15px] font-medium" style="color: var(--color-text-muted)">ไม่มีข้อความแจ้งเตือน</p>
-          </div>
+      <!-- Drill-down detail -->
+      <div
+        v-if="selectedCell && selectedRows.length"
+        class="rounded-xl border overflow-hidden"
+        style="background: var(--color-bg-card); border-color: var(--color-border)"
+      >
+        <div
+          class="px-4 py-3 border-b flex items-center justify-between gap-3"
+          style="border-color: var(--color-border)"
+        >
+          <h3 class="text-[14px] font-semibold" style="color: var(--color-text-primary)">
+            <i class="fa-solid fa-list mr-2 text-gray-500"></i>
+            รายละเอียด {{ selectedLabel }} ({{ selectedRows.length }} ฉบับ)
+          </h3>
+          <button
+            type="button"
+            class="text-[12px] px-3 py-1 rounded-lg border hover:bg-gray-50 transition-colors"
+            style="border-color: var(--color-border); color: var(--color-text-muted)"
+            @click="selectedCell = null"
+          >
+            <i class="fa-solid fa-xmark mr-1"></i>ปิด
+          </button>
         </div>
+        <div class="overflow-x-auto max-h-[360px] overflow-y-auto">
+          <table class="w-full text-[13px] border-collapse min-w-[700px]">
+            <thead class="sticky top-0 z-10" style="background: var(--color-bg-card)">
+              <tr style="border-bottom: 1px solid var(--color-border)">
+                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">เลขที่เอกสาร</th>
+                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">วันที่เปิด</th>
+                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">คู่ค้า / โครงการ</th>
+                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">Staff</th>
+                <th class="px-4 py-2.5 text-right font-medium" style="color: var(--color-text-muted)">สถานะ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in selectedRows"
+                :key="getRowDocNo(row, selectedCell.type) + getRowDate(row)"
+                class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors"
+                style="border-bottom: 1px solid var(--color-border)"
+              >
+                <td class="px-4 py-2.5 font-mono font-medium" style="color: var(--color-text-primary)">
+                  {{ getRowDocNo(row, selectedCell.type) }}
+                </td>
+                <td class="px-4 py-2.5 whitespace-nowrap" style="color: var(--color-text-muted)">
+                  {{ formatThaiShortDate(getRowDate(row)) }}
+                </td>
+                <td class="px-4 py-2.5 max-w-[200px] truncate" :title="row.organization || row.project || ''">
+                  {{ row.organization || row.project || '-' }}
+                </td>
+                <td class="px-4 py-2.5">{{ row.staff || row.created_by || '-' }}</td>
+                <td class="px-4 py-2.5 text-right">
+                  <span
+                    class="px-2 py-0.5 rounded-lg text-[11px] font-medium"
+                    style="background: rgba(0,0,0,0.05); color: var(--color-text-secondary)"
+                  >
+                    {{ row.status || row.payment_status || '-' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-        <!-- PV Section -->
-        <div v-if="activeTab === 'pv'" class="space-y-3 h-full">
-          <template v-if="filteredTrackedData.pv.length">
-            <div class="flex items-center gap-2 px-1">
-              <span class="w-1.5 h-5 bg-gray-900 dark:bg-white rounded-full"></span>
-              <h2 class="font-bold text-gray-800 dark:text-gray-100">รายการ PV ({{ filteredTrackedData.pv.length }})</h2>
-            </div>
-            <div class="rounded-xl border overflow-hidden bg-white dark:bg-gray-950 shadow-sm" style="border-color: var(--color-border)">
-              <table class="w-full text-[13px] border-collapse">
-                <thead class="bg-gray-50 dark:bg-gray-900/50" style="border-bottom: 1px solid var(--color-border)">
-                  <tr>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">เลขที่เอกสาร</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">วันที่</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">อายุเอกสาร</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
-                    <th class="px-4 py-3 text-left font-medium text-gray-500">โครงการ</th>
-                    <th class="px-4 py-3 text-right font-medium text-gray-500">สถานะ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="r in filteredTrackedData.pv" :key="getRowIdentity(r)" class="border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors" style="border-color: var(--color-border)">
-                    <td class="px-4 py-3 font-mono font-medium text-gray-900 dark:text-white">{{ r.document_number || r.pv_id }}</td>
-                    <td class="px-4 py-3">{{ r.issue_date || r.date }}</td>
-                    <td class="px-4 py-3 font-medium text-red-500">{{ calculateDocAge(r.issue_date || r.date) }}</td>
-                    <td class="px-4 py-3">{{ r.staff || '-' }}</td>
-                    <td class="px-4 py-3">{{ r.project || '-' }}</td>
-                    <td class="px-4 py-3 text-right">
-                      <span class="px-2 py-1 rounded-lg text-[11px] font-medium" :style="{ backgroundColor: getBadgeInfo(r.status).bg, color: getBadgeInfo(r.status).color }">
-                        {{ getBadgeInfo(r.status).text }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </template>
-          <div v-else class="h-full flex flex-col items-center justify-center py-20 text-center">
-            <i class="fa-solid fa-bell-slash text-4xl mb-4 opacity-10"></i>
-            <p class="text-[15px] font-medium" style="color: var(--color-text-muted)">ไม่มีข้อความแจ้งเตือน</p>
-          </div>
-        </div>
-      </template>
-    </div>
+      <div
+        v-else-if="!loading && grandTotal === 0"
+        class="rounded-xl border p-12 text-center"
+        style="border-color: var(--color-border)"
+      >
+        <i class="fa-solid fa-inbox text-4xl mb-4 opacity-20"></i>
+        <p class="text-[15px] font-medium" style="color: var(--color-text-muted)">ไม่พบเอกสารที่เปิดในเดือนนี้</p>
+      </div>
+    </template>
   </div>
 </template>
-
-<style scoped>
-@keyframes shake {
-  0% { transform: translateX(0); }
-  25% { transform: translateX(-1px); }
-  50% { transform: translateX(1px); }
-  75% { transform: translateX(-1px); }
-  100% { transform: translateX(0); }
-}
-
-.animate-shake-infinite {
-  animation: shake 0.5s infinite;
-}
-
-.overflow-auto::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.overflow-auto::-webkit-scrollbar-track {
-  background: transparent;
-}
-.overflow-auto::-webkit-scrollbar-thumb {
-  background: rgba(156, 163, 175, 0.3);
-  border-radius: 10px;
-}
-</style>
