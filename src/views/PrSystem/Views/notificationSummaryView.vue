@@ -1,12 +1,18 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 
 const trcloudStore = useTrcloudStore()
 const loading = ref(true)
 const errorText = ref('')
 const currentTime = ref(new Date())
-const selectedCell = ref(null) // { type, period }
+
+const filterFrom = ref(ymd(new Date()))
+const filterTo = ref(ymd(new Date()))
+const rangeAnchor = ref(null)
+const activeDocTab = ref('pr')
+const calendarYear = ref(new Date().getFullYear())
+const calendarMonth = ref(new Date().getMonth())
 
 let clockTimer = null
 
@@ -17,11 +23,13 @@ const DOC_TYPES = [
   { key: 'pv', label: 'PV', icon: 'fa-money-check-dollar', color: '#10b981' },
 ]
 
-const PERIODS = [
-  { key: 'today', label: 'วันนี้', sub: 'เอกสารที่เปิดวันนี้', icon: 'fa-sun' },
-  { key: 'yesterday', label: 'เมื่อวาน', sub: 'เอกสารที่เปิดเมื่อวาน', icon: 'fa-cloud-sun' },
-  { key: 'week', label: '1 อาทิตย์ที่ผ่านมา', sub: '7 วันล่าสุด (รวมวันนี้)', icon: 'fa-calendar-week' },
-  { key: 'month', label: 'เดือนนี้', sub: 'เอกสารที่เปิดทั้งหมดในเดือนนี้', icon: 'fa-calendar-days' },
+const WEEKDAYS = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส']
+
+const QUICK_PRESETS = [
+  { key: 'today', label: 'วันนี้' },
+  { key: 'yesterday', label: 'เมื่อวาน' },
+  { key: 'week', label: '7 วันล่าสุด' },
+  { key: 'month', label: 'เดือนนี้' },
 ]
 
 function ymd(d) {
@@ -30,6 +38,12 @@ function ymd(d) {
   const mm = String(x.getMonth() + 1).padStart(2, '0')
   const dd = String(x.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
+}
+
+function parseYmd(value) {
+  const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
 function normalizeDocDate(value) {
@@ -41,8 +55,8 @@ function normalizeDocDate(value) {
     const [d, m, y] = raw.split('/')
     if (y && m && d) return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
   }
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : ''
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : ''
 }
 
 function getRowDate(row) {
@@ -63,108 +77,88 @@ function getRowsByType(type) {
   return trcloudStore.pvRows
 }
 
-const dateBounds = computed(() => {
-  const now = new Date()
-  const today = ymd(now)
-  const yesterdayDate = new Date(now)
-  yesterdayDate.setDate(yesterdayDate.getDate() - 1)
-  const yesterday = ymd(yesterdayDate)
-  const weekStartDate = new Date(now)
-  weekStartDate.setDate(weekStartDate.getDate() - 6)
-  const weekStart = ymd(weekStartDate)
-  const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
-  return { today, yesterday, weekStart, monthStart }
-})
-
-function isInPeriod(docDate, period) {
+function isInSelectedRange(docDate) {
   if (!docDate) return false
-  const { today, yesterday, weekStart, monthStart } = dateBounds.value
-  if (period === 'today') return docDate === today
-  if (period === 'yesterday') return docDate === yesterday
-  if (period === 'week') return docDate >= weekStart && docDate <= today
-  if (period === 'month') return docDate >= monthStart && docDate <= today
-  return false
+  return docDate >= filterFrom.value && docDate <= filterTo.value
 }
 
-function filterRows(type, period) {
-  return getRowsByType(type).filter((row) => isInPeriod(getRowDate(row), period))
+function filterRowsByType(type) {
+  return getRowsByType(type)
+    .filter((row) => isInSelectedRange(getRowDate(row)))
+    .sort((a, b) => getRowDate(b).localeCompare(getRowDate(a)))
 }
 
-const countMatrix = computed(() => {
-  const matrix = {}
-  for (const t of DOC_TYPES) {
-    matrix[t.key] = {}
-    for (const p of PERIODS) {
-      matrix[t.key][p.key] = filterRows(t.key, p.key).length
-    }
-  }
-  return matrix
+const typeCounts = computed(() => {
+  const counts = {}
+  for (const t of DOC_TYPES) counts[t.key] = filterRowsByType(t.key).length
+  return counts
 })
 
-const periodTotals = computed(() => {
-  const totals = {}
-  for (const p of PERIODS) {
-    totals[p.key] = DOC_TYPES.reduce((sum, t) => sum + (countMatrix.value[t.key]?.[p.key] || 0), 0)
-  }
-  return totals
-})
-
-const typeTotals = computed(() => {
-  const totals = {}
-  for (const t of DOC_TYPES) {
-    totals[t.key] = PERIODS.reduce((sum, p) => sum + (countMatrix.value[t.key]?.[p.key] || 0), 0)
-  }
-  return totals
-})
-
-const grandTotal = computed(() =>
-  DOC_TYPES.reduce((sum, t) => sum + (typeTotals.value[t.key] || 0), 0)
+const rangeTotal = computed(() =>
+  DOC_TYPES.reduce((sum, t) => sum + (typeCounts.value[t.key] || 0), 0)
 )
 
-const maxCellCount = computed(() => {
-  let max = 0
+const activeRows = computed(() => filterRowsByType(activeDocTab.value))
+
+const isSingleDay = computed(() => filterFrom.value === filterTo.value)
+
+const rangeLabel = computed(() => {
+  if (isSingleDay.value) return formatThaiLongDate(filterFrom.value)
+  return `${formatThaiShortDate(filterFrom.value)} – ${formatThaiShortDate(filterTo.value)}`
+})
+
+const activePreset = computed(() => {
+  const now = new Date()
+  const today = ymd(now)
+  const yesterday = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  const weekStart = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6))
+  const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
+  if (filterFrom.value === today && filterTo.value === today) return 'today'
+  if (filterFrom.value === yesterday && filterTo.value === yesterday) return 'yesterday'
+  if (filterFrom.value === weekStart && filterTo.value === today) return 'week'
+  if (filterFrom.value === monthStart && filterTo.value === today) return 'month'
+  return ''
+})
+
+const calendarDays = computed(() => {
+  const first = new Date(calendarYear.value, calendarMonth.value, 1)
+  const startPad = first.getDay()
+  const daysInMonth = new Date(calendarYear.value, calendarMonth.value + 1, 0).getDate()
+  const daysInPrev = new Date(calendarYear.value, calendarMonth.value, 0).getDate()
+  const cells = []
+
+  for (let i = startPad - 1; i >= 0; i--) {
+    const day = daysInPrev - i
+    const date = new Date(calendarYear.value, calendarMonth.value - 1, day)
+    cells.push(buildCalendarCell(date, true))
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(calendarYear.value, calendarMonth.value, day)
+    cells.push(buildCalendarCell(date, false))
+  }
+  while (cells.length < 42) {
+    const day = cells.length - startPad - daysInMonth + 1
+    const date = new Date(calendarYear.value, calendarMonth.value + 1, day)
+    cells.push(buildCalendarCell(date, true))
+  }
+  return cells
+})
+
+function buildCalendarCell(date, outside) {
+  const key = ymd(date)
+  let count = 0
   for (const t of DOC_TYPES) {
-    for (const p of PERIODS) {
-      max = Math.max(max, countMatrix.value[t.key]?.[p.key] || 0)
-    }
+    count += getRowsByType(t.key).filter((r) => getRowDate(r) === key).length
   }
-  return max || 1
-})
-
-const selectedRows = computed(() => {
-  if (!selectedCell.value) return []
-  const { type, period } = selectedCell.value
-  return filterRows(type, period).sort((a, b) => getRowDate(b).localeCompare(getRowDate(a)))
-})
-
-const selectedLabel = computed(() => {
-  if (!selectedCell.value) return ''
-  const t = DOC_TYPES.find((x) => x.key === selectedCell.value.type)
-  const p = PERIODS.find((x) => x.key === selectedCell.value.period)
-  return `${t?.label || ''} — ${p?.label || ''}`
-})
-
-function cellIntensity(count) {
-  if (!count) return 0
-  return Math.max(0.12, Math.min(1, count / maxCellCount.value))
+  return { key, day: date.getDate(), outside, count }
 }
 
-function selectCell(type, period) {
-  const count = countMatrix.value[type]?.[period] || 0
-  if (!count) {
-    selectedCell.value = null
-    return
-  }
-  if (selectedCell.value?.type === type && selectedCell.value?.period === period) {
-    selectedCell.value = null
-  } else {
-    selectedCell.value = { type, period }
-  }
-}
-
-function isCellSelected(type, period) {
-  return selectedCell.value?.type === type && selectedCell.value?.period === period
-}
+const calendarMonthLabel = computed(() =>
+  new Date(calendarYear.value, calendarMonth.value, 1).toLocaleDateString('th-TH', {
+    month: 'long',
+    year: 'numeric',
+  })
+)
 
 function formatCurrentDate(date) {
   return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
@@ -176,30 +170,124 @@ function formatCurrentTime(date) {
 
 function formatThaiShortDate(ymdStr) {
   if (!ymdStr) return '-'
-  const [y, m, d] = ymdStr.split('-').map(Number)
-  if (!y || !m || !d) return ymdStr
-  return new Date(y, m - 1, d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+  const d = parseYmd(ymdStr)
+  if (!d) return ymdStr
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-function getMonthRangeLabel() {
-  const { monthStart, today } = dateBounds.value
-  return `${formatThaiShortDate(monthStart)} – ${formatThaiShortDate(today)}`
+function formatThaiLongDate(ymdStr) {
+  if (!ymdStr) return '-'
+  const d = parseYmd(ymdStr)
+  if (!d) return ymdStr
+  return d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 }
 
-function getWeekRangeLabel() {
-  const { weekStart, today } = dateBounds.value
-  return `${formatThaiShortDate(weekStart)} – ${formatThaiShortDate(today)}`
+function isToday(key) {
+  return key === ymd(new Date())
+}
+
+function isInRange(key) {
+  return key >= filterFrom.value && key <= filterTo.value
+}
+
+function isRangeStart(key) {
+  return key === filterFrom.value
+}
+
+function isRangeEnd(key) {
+  return key === filterTo.value
+}
+
+function setRange(from, to) {
+  const a = from <= to ? from : to
+  const b = from <= to ? to : from
+  filterFrom.value = a
+  filterTo.value = b
+  rangeAnchor.value = null
+  syncCalendarView(a)
+}
+
+function syncCalendarView(ymdStr) {
+  const d = parseYmd(ymdStr)
+  if (!d) return
+  calendarYear.value = d.getFullYear()
+  calendarMonth.value = d.getMonth()
+}
+
+function onDayClick(key) {
+  if (!rangeAnchor.value) {
+    rangeAnchor.value = key
+    filterFrom.value = key
+    filterTo.value = key
+    return
+  }
+  setRange(rangeAnchor.value, key)
+}
+
+function applyQuickPreset(key) {
+  const now = new Date()
+  const today = ymd(now)
+  if (key === 'today') setRange(today, today)
+  else if (key === 'yesterday') {
+    const y = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+    setRange(y, y)
+  } else if (key === 'week') {
+    const start = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6))
+    setRange(start, today)
+  } else if (key === 'month') {
+    const start = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
+    setRange(start, today)
+  }
+}
+
+function prevMonth() {
+  if (calendarMonth.value === 0) {
+    calendarMonth.value = 11
+    calendarYear.value -= 1
+  } else {
+    calendarMonth.value -= 1
+  }
+}
+
+function nextMonth() {
+  if (calendarMonth.value === 11) {
+    calendarMonth.value = 0
+    calendarYear.value += 1
+  } else {
+    calendarMonth.value += 1
+  }
+}
+
+function goTodayMonth() {
+  const now = new Date()
+  calendarYear.value = now.getFullYear()
+  calendarMonth.value = now.getMonth()
+}
+
+function onDateInputChange() {
+  const f = filterFrom.value
+  const t = filterTo.value
+  if (!f || !t) return
+  if (f > t) filterTo.value = f
+  else if (t < f) filterFrom.value = t
+  rangeAnchor.value = null
+  syncCalendarView(filterFrom.value)
 }
 
 async function fetchDashboardData(force = false) {
   loading.value = true
   errorText.value = ''
   try {
-    const now = new Date()
-    const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
-    const today = ymd(now)
-    trcloudStore.dateFrom = monthStart
-    trcloudStore.dateTo = today
+    const from = filterFrom.value
+    const to = filterTo.value
+    const now = ymd(new Date())
+    const monthStart = ymd(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+    const fetchFrom = from < monthStart ? from : monthStart
+    const fetchTo = to > now ? to : now
+
+    const rangeChanged = trcloudStore.dateFrom !== fetchFrom || trcloudStore.dateTo !== fetchTo
+    trcloudStore.dateFrom = fetchFrom
+    trcloudStore.dateTo = fetchTo
 
     const isCacheFresh =
       trcloudStore.lastFetched && Date.now() - new Date(trcloudStore.lastFetched).getTime() < 5 * 60 * 1000
@@ -209,10 +297,9 @@ async function fetchDashboardData(force = false) {
       !trcloudStore.apRows.length ||
       !trcloudStore.pvRows.length
 
-    if (force || !isCacheFresh || isAnyMissing) {
+    if (force || rangeChanged || !isCacheFresh || isAnyMissing) {
       await trcloudStore.fetchAll({ force, skipApStatusSync: true })
     }
-    selectedCell.value = null
   } catch (err) {
     console.error('Failed to fetch notification dashboard:', err)
     errorText.value = 'ไม่สามารถดึงข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
@@ -221,8 +308,17 @@ async function fetchDashboardData(force = false) {
   }
 }
 
-onMounted(() => {
+let rangeWatchReady = false
+
+watch([filterFrom, filterTo], () => {
+  if (!rangeWatchReady) return
   fetchDashboardData()
+})
+
+onMounted(() => {
+  fetchDashboardData().then(() => {
+    rangeWatchReady = true
+  })
   clockTimer = setInterval(() => {
     currentTime.value = new Date()
   }, 60000)
@@ -234,21 +330,21 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col h-full ns-daily-page">
     <!-- Header -->
-    <div class="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div class="mb-5 flex flex-col md:flex-row md:items-end justify-between gap-4">
       <div>
-        <h1 class="text-[20px] font-semibold flex items-center gap-2" style="color: var(--color-text-primary)">
-          <i class="fa-solid fa-bell text-gray-800 dark:text-white"></i>
+        <h1 class="text-[20px] font-semibold flex items-center gap-2">
+          <i class="fa-solid fa-bell"></i>
           สรุปข้อมูลแจ้งเตือน รายวัน
         </h1>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-          <p class="text-[13px]" style="color: var(--color-text-muted)">
+          <p class="text-[13px]">
             <i class="fa-regular fa-calendar-check mr-1"></i>
             {{ formatCurrentDate(currentTime) }}
           </p>
           <span class="w-1 h-1 bg-gray-300 rounded-full hidden sm:block"></span>
-          <p class="text-[13px]" style="color: var(--color-text-muted)">
+          <p class="text-[13px]">
             <i class="fa-regular fa-clock mr-1"></i>
             อัปเดตล่าสุด: {{ formatCurrentTime(currentTime) }}
           </p>
@@ -258,7 +354,7 @@ onUnmounted(() => {
       <button
         type="button"
         :disabled="loading"
-        class="px-4 py-2 rounded-lg text-[13px] font-medium bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        class="px-4 py-2 rounded-lg text-[13px] font-medium bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
         @click="fetchDashboardData(true)"
       >
         <i class="fa-solid fa-rotate" :class="loading ? 'fa-spin' : ''"></i>
@@ -269,230 +365,248 @@ onUnmounted(() => {
     <div
       v-if="errorText"
       class="mb-4 rounded-xl border p-3 text-[13px]"
-      style="border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.06); color: #b91c1c"
+      style="border-color: rgba(0, 0, 0, 0.15); background: rgba(0, 0, 0, 0.04)"
     >
       {{ errorText }}
     </div>
 
-    <!-- Period summary cards -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-      <div
-        v-for="p in PERIODS"
-        :key="p.key"
-        class="rounded-xl border p-4 transition-shadow hover:shadow-md"
-        style="background: var(--color-bg-card); border-color: var(--color-border)"
-      >
-        <div class="flex items-start justify-between gap-2">
-          <div>
-            <p class="text-[12px] font-medium" style="color: var(--color-text-muted)">{{ p.label }}</p>
-            <p class="text-[11px] mt-0.5" style="color: var(--color-text-muted)">{{ p.sub }}</p>
-          </div>
-          <div
-            class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-            style="background: rgba(59, 130, 246, 0.1)"
-          >
-            <i class="fa-solid text-[14px] text-blue-600" :class="p.icon"></i>
-          </div>
-        </div>
-        <p class="text-[28px] font-bold mt-3 leading-none" style="color: var(--color-text-primary)">
-          {{ loading ? '—' : periodTotals[p.key] }}
-          <span class="text-[13px] font-normal" style="color: var(--color-text-muted)">ฉบับ</span>
-        </p>
-        <p v-if="p.key === 'week' && !loading" class="text-[11px] mt-2" style="color: var(--color-text-muted)">
-          {{ getWeekRangeLabel() }}
-        </p>
-        <p v-else-if="p.key === 'month' && !loading" class="text-[11px] mt-2" style="color: var(--color-text-muted)">
-          {{ getMonthRangeLabel() }}
-        </p>
-      </div>
-    </div>
-
-    <!-- Loading -->
-    <div v-if="loading" class="py-20 text-center">
-      <i class="fa-solid fa-circle-notch fa-spin text-3xl text-gray-400 mb-4"></i>
-      <p style="color: var(--color-text-muted)">กำลังดึงข้อมูลเอกสาร...</p>
-    </div>
-
-    <template v-else>
-      <!-- Matrix table -->
-      <div
-        class="rounded-xl border overflow-hidden mb-6"
-        style="background: var(--color-bg-card); border-color: var(--color-border)"
-      >
-        <div class="px-4 py-3 border-b flex items-center justify-between" style="border-color: var(--color-border)">
-          <h2 class="text-[14px] font-semibold" style="color: var(--color-text-primary)">
-            <i class="fa-solid fa-table-columns mr-2 text-gray-500"></i>
-            สรุปจำนวนเอกสารแยกตามประเภทและช่วงเวลา
-          </h2>
-          <span class="text-[12px]" style="color: var(--color-text-muted)">
-            คลิกตัวเลขเพื่อดูรายละเอียด
-          </span>
-        </div>
-
-        <div class="overflow-x-auto">
-          <table class="w-full text-[13px] border-collapse min-w-[640px]">
-            <thead>
-              <tr style="background: var(--color-bg-muted, rgba(0,0,0,0.02)); border-bottom: 1px solid var(--color-border)">
-                <th class="px-4 py-3 text-left font-semibold w-[140px]" style="color: var(--color-text-muted)">ประเภท</th>
-                <th
-                  v-for="p in PERIODS"
-                  :key="p.key"
-                  class="px-4 py-3 text-center font-semibold"
-                  style="color: var(--color-text-muted)"
-                >
-                  {{ p.label }}
-                </th>
-                <th class="px-4 py-3 text-center font-semibold" style="color: var(--color-text-muted)">รวม</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="t in DOC_TYPES"
-                :key="t.key"
-                style="border-bottom: 1px solid var(--color-border)"
+    <!-- Calendar + range picker -->
+    <div
+      class="rounded-xl border p-4 mb-6"
+      style="background: var(--color-bg-card); border-color: var(--color-border)"
+    >
+      <div class="flex flex-col lg:flex-row gap-6">
+        <!-- Calendar -->
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-[14px] font-semibold">
+              <i class="fa-solid fa-calendar-days mr-2"></i>
+              เลือกวันที่
+            </h2>
+            <div class="flex items-center gap-1">
+              <button
+                type="button"
+                class="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors inline-flex items-center justify-center"
+                @click="prevMonth"
               >
-                <td class="px-4 py-3">
-                  <div class="flex items-center gap-2 font-semibold" style="color: var(--color-text-primary)">
-                    <i class="fa-solid w-4 text-center" :class="t.icon" :style="{ color: t.color }"></i>
-                    {{ t.label }}
-                  </div>
-                </td>
-                <td
-                  v-for="p in PERIODS"
-                  :key="p.key"
-                  class="px-4 py-3 text-center"
-                >
-                  <button
-                    type="button"
-                    class="inline-flex items-center justify-center min-w-[48px] px-3 py-1.5 rounded-lg font-bold text-[15px] transition-all"
-                    :class="isCellSelected(t.key, p.key) ? 'ring-2 ring-blue-500 ring-offset-1' : 'hover:scale-105'"
-                    :style="{
-                      backgroundColor: countMatrix[t.key][p.key]
-                        ? `rgba(${t.key === 'pr' ? '59,130,246' : t.key === 'po' ? '139,92,246' : t.key === 'ap' ? '245,158,11' : '16,185,129'}, ${cellIntensity(countMatrix[t.key][p.key])})`
-                        : 'rgba(148,163,184,0.08)',
-                      color: countMatrix[t.key][p.key] ? (t.key === 'ap' ? '#92400e' : t.color) : 'var(--color-text-muted)',
-                      cursor: countMatrix[t.key][p.key] ? 'pointer' : 'default',
-                    }"
-                    :disabled="!countMatrix[t.key][p.key]"
-                    @click="selectCell(t.key, p.key)"
-                  >
-                    {{ countMatrix[t.key][p.key] }}
-                  </button>
-                </td>
-                <td class="px-4 py-3 text-center font-bold" style="color: var(--color-text-primary)">
-                  {{ typeTotals[t.key] }}
-                </td>
-              </tr>
-              <tr style="background: rgba(0,0,0,0.02); border-top: 2px solid var(--color-border)">
-                <td class="px-4 py-3 font-bold" style="color: var(--color-text-primary)">รวมทั้งหมด</td>
-                <td
-                  v-for="p in PERIODS"
-                  :key="p.key"
-                  class="px-4 py-3 text-center font-bold text-[15px]"
-                  style="color: var(--color-text-primary)"
-                >
-                  {{ periodTotals[p.key] }}
-                </td>
-                <td class="px-4 py-3 text-center font-bold text-[16px] text-blue-600">
-                  {{ grandTotal }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Type breakdown bars -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <div
-          v-for="t in DOC_TYPES"
-          :key="t.key"
-          class="rounded-xl border p-4"
-          style="background: var(--color-bg-card); border-color: var(--color-border); border-left: 4px solid"
-          :style="{ borderLeftColor: t.color }"
-        >
-          <div class="flex items-center gap-2 mb-3">
-            <i class="fa-solid" :class="t.icon" :style="{ color: t.color }"></i>
-            <span class="text-[13px] font-semibold" style="color: var(--color-text-primary)">{{ t.label }}</span>
-            <span class="ml-auto text-[18px] font-bold" :style="{ color: t.color }">{{ typeTotals[t.key] }}</span>
+                <i class="fa-solid fa-chevron-left text-[11px]"></i>
+              </button>
+              <button
+                type="button"
+                class="px-3 h-8 rounded-lg text-[12px] font-medium border border-gray-300 hover:bg-gray-50 transition-colors"
+                @click="goTodayMonth"
+              >
+                {{ calendarMonthLabel }}
+              </button>
+              <button
+                type="button"
+                class="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors inline-flex items-center justify-center"
+                @click="nextMonth"
+              >
+                <i class="fa-solid fa-chevron-right text-[11px]"></i>
+              </button>
+            </div>
           </div>
-          <div class="space-y-2">
-            <div v-for="p in PERIODS" :key="p.key" class="flex items-center gap-2">
-              <span class="text-[11px] w-[72px] shrink-0 truncate" style="color: var(--color-text-muted)">{{ p.label }}</span>
-              <div class="flex-1 h-2 rounded-full overflow-hidden" style="background: rgba(148,163,184,0.15)">
-                <div
-                  class="h-full rounded-full transition-all duration-500"
-                  :style="{
-                    width: periodTotals[p.key] ? `${(countMatrix[t.key][p.key] / Math.max(...PERIODS.map(x => periodTotals[x.key]), 1)) * 100}%` : '0%',
-                    backgroundColor: t.color,
-                    opacity: countMatrix[t.key][p.key] ? 0.85 : 0.2,
-                  }"
-                ></div>
-              </div>
-              <span class="text-[12px] font-semibold w-6 text-right" style="color: var(--color-text-primary)">
-                {{ countMatrix[t.key][p.key] }}
+
+          <p class="text-[11px] mb-2">
+            คลิกวันแรก แล้วคลิกวันที่สองเพื่อเลือกช่วง — คลิกวันเดียว = ดูเอกสารวันนั้น
+          </p>
+
+          <div class="grid grid-cols-7 gap-1 mb-1">
+            <div
+              v-for="wd in WEEKDAYS"
+              :key="wd"
+              class="text-center text-[11px] font-semibold py-1"
+            >
+              {{ wd }}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-7 gap-1">
+            <button
+              v-for="cell in calendarDays"
+              :key="cell.key + '-' + cell.day"
+              type="button"
+              class="relative aspect-square rounded-lg text-[12px] font-medium transition-all flex flex-col items-center justify-center gap-0.5"
+              :class="[
+                cell.outside ? 'opacity-35' : '',
+                isInRange(cell.key) ? 'cal-day-in-range' : 'hover:bg-gray-100',
+                isRangeStart(cell.key) || isRangeEnd(cell.key) ? 'ring-2 ring-gray-400 ring-offset-1 z-10' : '',
+                isToday(cell.key) && !isInRange(cell.key) ? 'ring-1 ring-gray-400' : '',
+              ]"
+              :style="{
+                background: isInRange(cell.key)
+                  ? isRangeStart(cell.key) || isRangeEnd(cell.key)
+                    ? 'rgba(0, 0, 0, 0.12)'
+                    : 'rgba(0, 0, 0, 0.06)'
+                  : 'transparent',
+              }"
+              @click="onDayClick(cell.key)"
+            >
+              <span>{{ cell.day }}</span>
+              <span
+                v-if="cell.count > 0 && !isInRange(cell.key)"
+                class="text-[9px] font-bold leading-none px-1 rounded-full bg-gray-200"
+              >
+                {{ cell.count }}
               </span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Range controls -->
+        <div class="lg:w-[280px] shrink-0 flex flex-col gap-4">
+          <div>
+            <p class="text-[12px] font-semibold mb-2">ช่วงที่เลือก</p>
+            <p class="text-[14px] font-semibold leading-snug">
+              {{ rangeLabel }}
+            </p>
+            <p class="text-[12px] mt-1">
+              รวม {{ loading ? '—' : rangeTotal }} ฉบับ
+              <span v-if="rangeAnchor"> — คลิกวันที่สองเพื่อกำหนดช่วง</span>
+            </p>
+          </div>
+
+          <div class="space-y-2">
+            <label class="block">
+              <span class="text-[11px] font-medium mb-1 block">ตั้งแต่</span>
+              <input
+                v-model="filterFrom"
+                type="date"
+                class="w-full px-3 py-2 rounded-lg text-[13px] border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
+                @change="onDateInputChange"
+              />
+            </label>
+            <label class="block">
+              <span class="text-[11px] font-medium mb-1 block">ถึง</span>
+              <input
+                v-model="filterTo"
+                type="date"
+                class="w-full px-3 py-2 rounded-lg text-[13px] border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
+                @change="onDateInputChange"
+              />
+            </label>
+          </div>
+
+          <div>
+            <p class="text-[11px] font-medium mb-2">เลือกเร็ว</p>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="p in QUICK_PRESETS"
+                :key="p.key"
+                type="button"
+                class="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 transition-colors hover:bg-gray-50"
+                :class="activePreset === p.key ? 'bg-gray-200' : 'bg-white'"
+                @click="applyQuickPreset(p.key)"
+              >
+                {{ p.label }}
+              </button>
             </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Drill-down detail -->
+    <!-- Loading -->
+    <div v-if="loading" class="py-16 text-center">
+      <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i>
+      <p>กำลังดึงข้อมูลเอกสาร...</p>
+    </div>
+
+    <template v-else>
+      <!-- Type summary cards -->
+      <div class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <button
+          v-for="t in DOC_TYPES"
+          :key="t.key"
+          type="button"
+          class="rounded-xl border p-4 text-left transition-all hover:shadow-md"
+          :class="activeDocTab === t.key ? 'ring-2 ring-offset-1' : ''"
+          :style="{
+            background: 'var(--color-bg-card)',
+            borderColor: activeDocTab === t.key ? '#000' : 'var(--color-border)',
+            borderLeft: '4px solid #000',
+          }"
+          @click="activeDocTab = t.key"
+        >
+          <div class="flex items-center gap-2 mb-2">
+            <i class="fa-solid" :class="t.icon"></i>
+            <span class="text-[13px] font-semibold">{{ t.label }}</span>
+          </div>
+          <p class="text-[28px] font-bold leading-none">
+            {{ typeCounts[t.key] }}
+            <span class="text-[13px] font-normal">ฉบับ</span>
+          </p>
+          <p class="text-[11px] mt-2">
+            {{ isSingleDay ? 'สร้างในวันนี้' : 'สร้างในช่วงที่เลือก' }}
+          </p>
+        </button>
+      </div>
+
+      <!-- Document tabs -->
       <div
-        v-if="selectedCell && selectedRows.length"
         class="rounded-xl border overflow-hidden"
         style="background: var(--color-bg-card); border-color: var(--color-border)"
       >
         <div
-          class="px-4 py-3 border-b flex items-center justify-between gap-3"
+          class="px-4 py-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3"
           style="border-color: var(--color-border)"
         >
-          <h3 class="text-[14px] font-semibold" style="color: var(--color-text-primary)">
-            <i class="fa-solid fa-list mr-2 text-gray-500"></i>
-            รายละเอียด {{ selectedLabel }} ({{ selectedRows.length }} ฉบับ)
-          </h3>
-          <button
-            type="button"
-            class="text-[12px] px-3 py-1 rounded-lg border hover:bg-gray-50 transition-colors"
-            style="border-color: var(--color-border); color: var(--color-text-muted)"
-            @click="selectedCell = null"
-          >
-            <i class="fa-solid fa-xmark mr-1"></i>ปิด
-          </button>
+          <div class="flex items-center gap-2 p-1 bg-gray-100 rounded-xl w-fit">
+            <button
+              v-for="t in DOC_TYPES"
+              :key="t.key"
+              type="button"
+              class="px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all flex items-center gap-1.5"
+              :class="activeDocTab === t.key ? 'bg-white shadow-sm' : ''"
+              @click="activeDocTab = t.key"
+            >
+              <i class="fa-solid" :class="t.icon"></i>
+              {{ t.label }}
+              <span class="px-1.5 py-0.5 rounded-full text-[10px] bg-gray-200">
+                {{ typeCounts[t.key] }}
+              </span>
+            </button>
+          </div>
+          <p class="text-[12px]">
+            เอกสารที่ถูกสร้าง{{ isSingleDay ? ' วันที่' : ' ระหว่าง' }} {{ rangeLabel }}
+          </p>
         </div>
-        <div class="overflow-x-auto max-h-[360px] overflow-y-auto">
-          <table class="w-full text-[13px] border-collapse min-w-[700px]">
+
+        <div v-if="activeRows.length" class="overflow-x-auto max-h-[480px] overflow-y-auto">
+          <table class="w-full text-[13px] border-collapse min-w-[720px]">
             <thead class="sticky top-0 z-10" style="background: var(--color-bg-card)">
               <tr style="border-bottom: 1px solid var(--color-border)">
-                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">เลขที่เอกสาร</th>
-                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">วันที่เปิด</th>
-                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">คู่ค้า / โครงการ</th>
-                <th class="px-4 py-2.5 text-left font-medium" style="color: var(--color-text-muted)">Staff</th>
-                <th class="px-4 py-2.5 text-right font-medium" style="color: var(--color-text-muted)">สถานะ</th>
+                <th class="px-4 py-2.5 text-left font-medium">เลขที่เอกสาร</th>
+                <th class="px-4 py-2.5 text-left font-medium">วันที่สร้าง</th>
+                <th class="px-4 py-2.5 text-left font-medium">คู่ค้า / โครงการ</th>
+                <th class="px-4 py-2.5 text-left font-medium">Staff</th>
+                <th class="px-4 py-2.5 text-right font-medium">มูลค่า</th>
+                <th class="px-4 py-2.5 text-right font-medium">สถานะ</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="row in selectedRows"
-                :key="getRowDocNo(row, selectedCell.type) + getRowDate(row)"
-                class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors"
+                v-for="row in activeRows"
+                :key="getRowDocNo(row, activeDocTab) + getRowDate(row)"
+                class="hover:bg-gray-50 transition-colors"
                 style="border-bottom: 1px solid var(--color-border)"
               >
-                <td class="px-4 py-2.5 font-mono font-medium" style="color: var(--color-text-primary)">
-                  {{ getRowDocNo(row, selectedCell.type) }}
+                <td class="px-4 py-2.5 font-mono font-medium">
+                  {{ getRowDocNo(row, activeDocTab) }}
                 </td>
-                <td class="px-4 py-2.5 whitespace-nowrap" style="color: var(--color-text-muted)">
+                <td class="px-4 py-2.5 whitespace-nowrap">
                   {{ formatThaiShortDate(getRowDate(row)) }}
                 </td>
                 <td class="px-4 py-2.5 max-w-[200px] truncate" :title="row.organization || row.project || ''">
                   {{ row.organization || row.project || '-' }}
                 </td>
                 <td class="px-4 py-2.5">{{ row.staff || row.created_by || '-' }}</td>
+                <td class="px-4 py-2.5 text-right font-mono whitespace-nowrap">
+                  {{ Number(row.grand_total || row.total || row.item_total || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}
+                </td>
                 <td class="px-4 py-2.5 text-right">
-                  <span
-                    class="px-2 py-0.5 rounded-lg text-[11px] font-medium"
-                    style="background: rgba(0,0,0,0.05); color: var(--color-text-secondary)"
-                  >
+                  <span class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-gray-100">
                     {{ row.status || row.payment_status || '-' }}
                   </span>
                 </td>
@@ -500,16 +614,35 @@ onUnmounted(() => {
             </tbody>
           </table>
         </div>
-      </div>
 
-      <div
-        v-else-if="!loading && grandTotal === 0"
-        class="rounded-xl border p-12 text-center"
-        style="border-color: var(--color-border)"
-      >
-        <i class="fa-solid fa-inbox text-4xl mb-4 opacity-20"></i>
-        <p class="text-[15px] font-medium" style="color: var(--color-text-muted)">ไม่พบเอกสารที่เปิดในเดือนนี้</p>
+        <div v-else class="py-16 text-center">
+          <i class="fa-solid fa-inbox text-4xl mb-4 opacity-20"></i>
+          <p class="text-[15px] font-medium">
+            ไม่พบเอกสาร {{ DOC_TYPES.find((x) => x.key === activeDocTab)?.label }} ในช่วงที่เลือก
+          </p>
+        </div>
       </div>
     </template>
   </div>
 </template>
+
+<style scoped>
+.ns-daily-page,
+.ns-daily-page :deep(h1),
+.ns-daily-page :deep(h2),
+.ns-daily-page :deep(h3),
+.ns-daily-page :deep(p),
+.ns-daily-page :deep(span),
+.ns-daily-page :deep(label),
+.ns-daily-page :deep(th),
+.ns-daily-page :deep(td),
+.ns-daily-page :deep(button),
+.ns-daily-page :deep(input),
+.ns-daily-page :deep(i) {
+  color: #000000;
+}
+
+.ns-daily-page :deep(input[type='date']) {
+  color-scheme: light;
+}
+</style>
