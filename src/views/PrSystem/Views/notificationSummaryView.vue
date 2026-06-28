@@ -15,29 +15,26 @@ const calendarYear = ref(new Date().getFullYear())
 const calendarMonth = ref(new Date().getMonth())
 
 let clockTimer = null
+let rangeWatchReady = false
 
 const DOC_TYPES = [
-  { key: 'pr', label: 'PR', icon: 'fa-file-lines', color: '#3b82f6' },
-  { key: 'po', label: 'PO', icon: 'fa-file-invoice-dollar', color: '#8b5cf6' },
-  { key: 'ap', label: 'AP', icon: 'fa-file-invoice', color: '#f59e0b' },
-  { key: 'pv', label: 'PV', icon: 'fa-money-check-dollar', color: '#10b981' },
+  { key: 'pr', label: 'PR', icon: 'fa-file-lines' },
+  { key: 'po', label: 'PO', icon: 'fa-file-invoice-dollar' },
+  { key: 'ap', label: 'AP', icon: 'fa-file-invoice' },
+  { key: 'pv', label: 'PV', icon: 'fa-money-check-dollar' },
+]
+
+const KPI_PERIODS = [
+  { key: 'today', label: 'วันนี้', sub: 'เอกสารที่สร้างวันนี้', icon: 'fa-sun' },
+  { key: 'week', label: 'อาทิตย์ที่ผ่านมา', sub: '7 วันล่าสุด', icon: 'fa-calendar-week' },
+  { key: 'month', label: 'เดือนที่ผ่านมา', sub: 'เดือนก่อนหน้า (ทั้งเดือน)', icon: 'fa-calendar-days' },
 ]
 
 const WEEKDAYS = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส']
 
-const QUICK_PRESETS = [
-  { key: 'today', label: 'วันนี้' },
-  { key: 'yesterday', label: 'เมื่อวาน' },
-  { key: 'week', label: '7 วันล่าสุด' },
-  { key: 'month', label: 'เดือนนี้' },
-]
-
 function ymd(d) {
   const x = new Date(d)
-  const yyyy = String(x.getFullYear())
-  const mm = String(x.getMonth() + 1).padStart(2, '0')
-  const dd = String(x.getDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
 }
 
 function parseYmd(value) {
@@ -77,6 +74,45 @@ function getRowsByType(type) {
   return trcloudStore.pvRows
 }
 
+function getPeriodBounds(key) {
+  const now = new Date()
+  const today = ymd(now)
+  if (key === 'today') return { from: today, to: today }
+  if (key === 'week') {
+    const start = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6))
+    return { from: start, to: today }
+  }
+  if (key === 'month') {
+    const start = ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1))
+    const end = ymd(new Date(now.getFullYear(), now.getMonth(), 0))
+    return { from: start, to: end }
+  }
+  return { from: today, to: today }
+}
+
+function countInRange(from, to) {
+  const counts = {}
+  let total = 0
+  for (const t of DOC_TYPES) {
+    const n = getRowsByType(t.key).filter((row) => {
+      const d = getRowDate(row)
+      return d && d >= from && d <= to
+    }).length
+    counts[t.key] = n
+    total += n
+  }
+  return { counts, total }
+}
+
+const kpiData = computed(() => {
+  const out = {}
+  for (const p of KPI_PERIODS) {
+    const { from, to } = getPeriodBounds(p.key)
+    out[p.key] = { ...countInRange(from, to), from, to }
+  }
+  return out
+})
+
 function isInSelectedRange(docDate) {
   if (!docDate) return false
   return docDate >= filterFrom.value && docDate <= filterTo.value
@@ -107,16 +143,11 @@ const rangeLabel = computed(() => {
   return `${formatThaiShortDate(filterFrom.value)} – ${formatThaiShortDate(filterTo.value)}`
 })
 
-const activePreset = computed(() => {
-  const now = new Date()
-  const today = ymd(now)
-  const yesterday = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
-  const weekStart = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6))
-  const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
-  if (filterFrom.value === today && filterTo.value === today) return 'today'
-  if (filterFrom.value === yesterday && filterTo.value === yesterday) return 'yesterday'
-  if (filterFrom.value === weekStart && filterTo.value === today) return 'week'
-  if (filterFrom.value === monthStart && filterTo.value === today) return 'month'
+const activeKpiKey = computed(() => {
+  for (const p of KPI_PERIODS) {
+    const { from, to } = getPeriodBounds(p.key)
+    if (filterFrom.value === from && filterTo.value === to) return p.key
+  }
   return ''
 })
 
@@ -129,17 +160,14 @@ const calendarDays = computed(() => {
 
   for (let i = startPad - 1; i >= 0; i--) {
     const day = daysInPrev - i
-    const date = new Date(calendarYear.value, calendarMonth.value - 1, day)
-    cells.push(buildCalendarCell(date, true))
+    cells.push(buildCalendarCell(new Date(calendarYear.value, calendarMonth.value - 1, day), true))
   }
   for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(calendarYear.value, calendarMonth.value, day)
-    cells.push(buildCalendarCell(date, false))
+    cells.push(buildCalendarCell(new Date(calendarYear.value, calendarMonth.value, day), false))
   }
   while (cells.length < 42) {
     const day = cells.length - startPad - daysInMonth + 1
-    const date = new Date(calendarYear.value, calendarMonth.value + 1, day)
-    cells.push(buildCalendarCell(date, true))
+    cells.push(buildCalendarCell(new Date(calendarYear.value, calendarMonth.value + 1, day), true))
   }
   return cells
 })
@@ -155,7 +183,7 @@ function buildCalendarCell(date, outside) {
 
 const calendarMonthLabel = computed(() =>
   new Date(calendarYear.value, calendarMonth.value, 1).toLocaleDateString('th-TH', {
-    month: 'long',
+    month: 'short',
     year: 'numeric',
   })
 )
@@ -169,16 +197,14 @@ function formatCurrentTime(date) {
 }
 
 function formatThaiShortDate(ymdStr) {
-  if (!ymdStr) return '-'
   const d = parseYmd(ymdStr)
-  if (!d) return ymdStr
+  if (!d) return ymdStr || '-'
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 function formatThaiLongDate(ymdStr) {
-  if (!ymdStr) return '-'
   const d = parseYmd(ymdStr)
-  if (!d) return ymdStr
+  if (!d) return ymdStr || '-'
   return d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 }
 
@@ -190,12 +216,8 @@ function isInRange(key) {
   return key >= filterFrom.value && key <= filterTo.value
 }
 
-function isRangeStart(key) {
-  return key === filterFrom.value
-}
-
-function isRangeEnd(key) {
-  return key === filterTo.value
+function isRangeEdge(key) {
+  return key === filterFrom.value || key === filterTo.value
 }
 
 function setRange(from, to) {
@@ -224,20 +246,9 @@ function onDayClick(key) {
   setRange(rangeAnchor.value, key)
 }
 
-function applyQuickPreset(key) {
-  const now = new Date()
-  const today = ymd(now)
-  if (key === 'today') setRange(today, today)
-  else if (key === 'yesterday') {
-    const y = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
-    setRange(y, y)
-  } else if (key === 'week') {
-    const start = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6))
-    setRange(start, today)
-  } else if (key === 'month') {
-    const start = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
-    setRange(start, today)
-  }
+function applyKpiPeriod(key) {
+  const { from, to } = getPeriodBounds(key)
+  setRange(from, to)
 }
 
 function prevMonth() {
@@ -258,12 +269,6 @@ function nextMonth() {
   }
 }
 
-function goTodayMonth() {
-  const now = new Date()
-  calendarYear.value = now.getFullYear()
-  calendarMonth.value = now.getMonth()
-}
-
 function onDateInputChange() {
   const f = filterFrom.value
   const t = filterTo.value
@@ -274,17 +279,22 @@ function onDateInputChange() {
   syncCalendarView(filterFrom.value)
 }
 
+function getFetchRange() {
+  const now = ymd(new Date())
+  const prevMonthStart = ymd(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1))
+  const weekStart = ymd(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() - 6))
+  const candidates = [filterFrom.value, filterTo.value, prevMonthStart, weekStart, now]
+  return {
+    from: candidates.reduce((a, b) => (a < b ? a : b)),
+    to: candidates.reduce((a, b) => (a > b ? a : b)),
+  }
+}
+
 async function fetchDashboardData(force = false) {
   loading.value = true
   errorText.value = ''
   try {
-    const from = filterFrom.value
-    const to = filterTo.value
-    const now = ymd(new Date())
-    const monthStart = ymd(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
-    const fetchFrom = from < monthStart ? from : monthStart
-    const fetchTo = to > now ? to : now
-
+    const { from: fetchFrom, to: fetchTo } = getFetchRange()
     const rangeChanged = trcloudStore.dateFrom !== fetchFrom || trcloudStore.dateTo !== fetchTo
     trcloudStore.dateFrom = fetchFrom
     trcloudStore.dateTo = fetchTo
@@ -308,14 +318,13 @@ async function fetchDashboardData(force = false) {
   }
 }
 
-let rangeWatchReady = false
-
 watch([filterFrom, filterTo], () => {
   if (!rangeWatchReady) return
   fetchDashboardData()
 })
 
 onMounted(() => {
+  applyKpiPeriod('today')
   fetchDashboardData().then(() => {
     rangeWatchReady = true
   })
@@ -332,297 +341,253 @@ onUnmounted(() => {
 <template>
   <div class="flex flex-col h-full ns-daily-page">
     <!-- Header -->
-    <div class="mb-5 flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div class="mb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
       <div>
         <h1 class="text-[20px] font-semibold flex items-center gap-2">
           <i class="fa-solid fa-bell"></i>
           สรุปข้อมูลแจ้งเตือน รายวัน
         </h1>
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-          <p class="text-[13px]">
-            <i class="fa-regular fa-calendar-check mr-1"></i>
-            {{ formatCurrentDate(currentTime) }}
-          </p>
-          <span class="w-1 h-1 bg-gray-300 rounded-full hidden sm:block"></span>
-          <p class="text-[13px]">
-            <i class="fa-regular fa-clock mr-1"></i>
-            อัปเดตล่าสุด: {{ formatCurrentTime(currentTime) }}
-          </p>
-        </div>
+        <p class="text-[12px] mt-0.5">
+          <i class="fa-regular fa-clock mr-1"></i>
+          อัปเดตล่าสุด {{ formatCurrentTime(currentTime) }} · {{ formatCurrentDate(currentTime) }}
+        </p>
       </div>
-
       <button
         type="button"
         :disabled="loading"
-        class="px-4 py-2 rounded-lg text-[13px] font-medium bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
+        class="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 transition-colors flex items-center gap-2 self-start"
         @click="fetchDashboardData(true)"
       >
         <i class="fa-solid fa-rotate" :class="loading ? 'fa-spin' : ''"></i>
-        อัปเดตข้อมูล
+        อัปเดต
       </button>
     </div>
 
-    <div
-      v-if="errorText"
-      class="mb-4 rounded-xl border p-3 text-[13px]"
-      style="border-color: rgba(0, 0, 0, 0.15); background: rgba(0, 0, 0, 0.04)"
-    >
+    <div v-if="errorText" class="mb-4 rounded-lg border border-gray-300 bg-gray-50 p-3 text-[13px]">
       {{ errorText }}
     </div>
 
-    <!-- Calendar + range picker -->
-    <div
-      class="rounded-xl border p-4 mb-6"
-      style="background: var(--color-bg-card); border-color: var(--color-border)"
-    >
-      <div class="flex flex-col lg:flex-row gap-6">
-        <!-- Calendar -->
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-[14px] font-semibold">
-              <i class="fa-solid fa-calendar-days mr-2"></i>
-              เลือกวันที่
-            </h2>
-            <div class="flex items-center gap-1">
-              <button
-                type="button"
-                class="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors inline-flex items-center justify-center"
-                @click="prevMonth"
-              >
-                <i class="fa-solid fa-chevron-left text-[11px]"></i>
-              </button>
-              <button
-                type="button"
-                class="px-3 h-8 rounded-lg text-[12px] font-medium border border-gray-300 hover:bg-gray-50 transition-colors"
-                @click="goTodayMonth"
-              >
-                {{ calendarMonthLabel }}
-              </button>
-              <button
-                type="button"
-                class="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors inline-flex items-center justify-center"
-                @click="nextMonth"
-              >
-                <i class="fa-solid fa-chevron-right text-[11px]"></i>
-              </button>
+    <div class="flex flex-col xl:flex-row gap-5 flex-1 min-h-0">
+      <!-- Main: KPI + data -->
+      <div class="flex-1 min-w-0 flex flex-col gap-5">
+        <!-- KPI cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <button
+            v-for="p in KPI_PERIODS"
+            :key="p.key"
+            type="button"
+            class="rounded-xl border p-4 text-left transition-all hover:shadow-md"
+            :class="activeKpiKey === p.key ? 'border-black bg-gray-50 shadow-sm' : 'border-gray-200 bg-white'"
+            @click="applyKpiPeriod(p.key)"
+          >
+            <div class="flex items-start justify-between gap-2 mb-3">
+              <div>
+                <p class="text-[13px] font-bold">{{ p.label }}</p>
+                <p class="text-[11px] mt-0.5 opacity-70">{{ p.sub }}</p>
+              </div>
+              <i class="fa-solid text-[14px] opacity-60" :class="p.icon"></i>
             </div>
-          </div>
-
-          <p class="text-[11px] mb-2">
-            คลิกวันแรก แล้วคลิกวันที่สองเพื่อเลือกช่วง — คลิกวันเดียว = ดูเอกสารวันนั้น
-          </p>
-
-          <div class="grid grid-cols-7 gap-1 mb-1">
-            <div
-              v-for="wd in WEEKDAYS"
-              :key="wd"
-              class="text-center text-[11px] font-semibold py-1"
-            >
-              {{ wd }}
-            </div>
-          </div>
-
-          <div class="grid grid-cols-7 gap-1">
-            <button
-              v-for="cell in calendarDays"
-              :key="cell.key + '-' + cell.day"
-              type="button"
-              class="relative aspect-square rounded-lg text-[12px] font-medium transition-all flex flex-col items-center justify-center gap-0.5"
-              :class="[
-                cell.outside ? 'opacity-35' : '',
-                isInRange(cell.key) ? 'cal-day-in-range' : 'hover:bg-gray-100',
-                isRangeStart(cell.key) || isRangeEnd(cell.key) ? 'ring-2 ring-gray-400 ring-offset-1 z-10' : '',
-                isToday(cell.key) && !isInRange(cell.key) ? 'ring-1 ring-gray-400' : '',
-              ]"
-              :style="{
-                background: isInRange(cell.key)
-                  ? isRangeStart(cell.key) || isRangeEnd(cell.key)
-                    ? 'rgba(0, 0, 0, 0.12)'
-                    : 'rgba(0, 0, 0, 0.06)'
-                  : 'transparent',
-              }"
-              @click="onDayClick(cell.key)"
-            >
-              <span>{{ cell.day }}</span>
-              <span
-                v-if="cell.count > 0 && !isInRange(cell.key)"
-                class="text-[9px] font-bold leading-none px-1 rounded-full bg-gray-200"
+            <p class="text-[32px] font-bold leading-none mb-3">
+              {{ loading ? '—' : kpiData[p.key].total }}
+              <span class="text-[13px] font-normal">ฉบับ</span>
+            </p>
+            <div class="grid grid-cols-4 gap-1">
+              <div
+                v-for="t in DOC_TYPES"
+                :key="t.key"
+                class="text-center rounded-lg py-1.5 bg-gray-100"
               >
-                {{ cell.count }}
-              </span>
-            </button>
-          </div>
+                <p class="text-[10px] font-medium opacity-70">{{ t.label }}</p>
+                <p class="text-[14px] font-bold">{{ loading ? '—' : kpiData[p.key].counts[t.key] }}</p>
+              </div>
+            </div>
+          </button>
         </div>
 
-        <!-- Range controls -->
-        <div class="lg:w-[280px] shrink-0 flex flex-col gap-4">
-          <div>
-            <p class="text-[12px] font-semibold mb-2">ช่วงที่เลือก</p>
-            <p class="text-[14px] font-semibold leading-snug">
-              {{ rangeLabel }}
-            </p>
-            <p class="text-[12px] mt-1">
-              รวม {{ loading ? '—' : rangeTotal }} ฉบับ
-              <span v-if="rangeAnchor"> — คลิกวันที่สองเพื่อกำหนดช่วง</span>
-            </p>
+        <!-- Selected range banner -->
+        <div class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2 text-[13px]">
+            <i class="fa-solid fa-filter text-[12px]"></i>
+            <span class="font-semibold">ช่วงที่แสดง:</span>
+            <span>{{ rangeLabel }}</span>
+            <span v-if="rangeAnchor" class="text-[11px] opacity-70">(คลิกวันที่สองในปฏิทิน)</span>
           </div>
-
-          <div class="space-y-2">
-            <label class="block">
-              <span class="text-[11px] font-medium mb-1 block">ตั้งแต่</span>
-              <input
-                v-model="filterFrom"
-                type="date"
-                class="w-full px-3 py-2 rounded-lg text-[13px] border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
-                @change="onDateInputChange"
-              />
-            </label>
-            <label class="block">
-              <span class="text-[11px] font-medium mb-1 block">ถึง</span>
-              <input
-                v-model="filterTo"
-                type="date"
-                class="w-full px-3 py-2 rounded-lg text-[13px] border border-gray-300 bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
-                @change="onDateInputChange"
-              />
-            </label>
-          </div>
-
-          <div>
-            <p class="text-[11px] font-medium mb-2">เลือกเร็ว</p>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="p in QUICK_PRESETS"
-                :key="p.key"
-                type="button"
-                class="px-3 py-1.5 rounded-lg text-[12px] font-medium border border-gray-300 transition-colors hover:bg-gray-50"
-                :class="activePreset === p.key ? 'bg-gray-200' : 'bg-white'"
-                @click="applyQuickPreset(p.key)"
-              >
-                {{ p.label }}
-              </button>
-            </div>
-          </div>
+          <span class="text-[13px] font-bold">
+            รวม {{ loading ? '—' : rangeTotal }} ฉบับ
+          </span>
         </div>
-      </div>
-    </div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="py-16 text-center">
-      <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-4"></i>
-      <p>กำลังดึงข้อมูลเอกสาร...</p>
-    </div>
+        <!-- Loading -->
+        <div v-if="loading" class="py-16 text-center">
+          <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-3"></i>
+          <p class="text-[13px]">กำลังดึงข้อมูล...</p>
+        </div>
 
-    <template v-else>
-      <!-- Type summary cards -->
-      <div class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <button
-          v-for="t in DOC_TYPES"
-          :key="t.key"
-          type="button"
-          class="rounded-xl border p-4 text-left transition-all hover:shadow-md"
-          :class="activeDocTab === t.key ? 'ring-2 ring-offset-1' : ''"
-          :style="{
-            background: 'var(--color-bg-card)',
-            borderColor: activeDocTab === t.key ? '#000' : 'var(--color-border)',
-            borderLeft: '4px solid #000',
-          }"
-          @click="activeDocTab = t.key"
-        >
-          <div class="flex items-center gap-2 mb-2">
-            <i class="fa-solid" :class="t.icon"></i>
-            <span class="text-[13px] font-semibold">{{ t.label }}</span>
-          </div>
-          <p class="text-[28px] font-bold leading-none">
-            {{ typeCounts[t.key] }}
-            <span class="text-[13px] font-normal">ฉบับ</span>
-          </p>
-          <p class="text-[11px] mt-2">
-            {{ isSingleDay ? 'สร้างในวันนี้' : 'สร้างในช่วงที่เลือก' }}
-          </p>
-        </button>
-      </div>
-
-      <!-- Document tabs -->
-      <div
-        class="rounded-xl border overflow-hidden"
-        style="background: var(--color-bg-card); border-color: var(--color-border)"
-      >
-        <div
-          class="px-4 py-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-          style="border-color: var(--color-border)"
-        >
-          <div class="flex items-center gap-2 p-1 bg-gray-100 rounded-xl w-fit">
+        <template v-else>
+          <!-- Type cards for selected range -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <button
               v-for="t in DOC_TYPES"
               :key="t.key"
               type="button"
-              class="px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all flex items-center gap-1.5"
-              :class="activeDocTab === t.key ? 'bg-white shadow-sm' : ''"
+              class="rounded-xl border p-3 text-left transition-all hover:shadow-sm"
+              :class="activeDocTab === t.key ? 'border-black bg-gray-50' : 'border-gray-200 bg-white'"
               @click="activeDocTab = t.key"
             >
-              <i class="fa-solid" :class="t.icon"></i>
-              {{ t.label }}
-              <span class="px-1.5 py-0.5 rounded-full text-[10px] bg-gray-200">
+              <div class="flex items-center gap-2 mb-1">
+                <i class="fa-solid text-[13px]" :class="t.icon"></i>
+                <span class="text-[12px] font-semibold">{{ t.label }}</span>
+              </div>
+              <p class="text-[24px] font-bold leading-none">
                 {{ typeCounts[t.key] }}
-              </span>
+                <span class="text-[11px] font-normal">ฉบับ</span>
+              </p>
             </button>
           </div>
-          <p class="text-[12px]">
-            เอกสารที่ถูกสร้าง{{ isSingleDay ? ' วันที่' : ' ระหว่าง' }} {{ rangeLabel }}
-          </p>
-        </div>
 
-        <div v-if="activeRows.length" class="overflow-x-auto max-h-[480px] overflow-y-auto">
-          <table class="w-full text-[13px] border-collapse min-w-[720px]">
-            <thead class="sticky top-0 z-10" style="background: var(--color-bg-card)">
-              <tr style="border-bottom: 1px solid var(--color-border)">
-                <th class="px-4 py-2.5 text-left font-medium">เลขที่เอกสาร</th>
-                <th class="px-4 py-2.5 text-left font-medium">วันที่สร้าง</th>
-                <th class="px-4 py-2.5 text-left font-medium">คู่ค้า / โครงการ</th>
-                <th class="px-4 py-2.5 text-left font-medium">Staff</th>
-                <th class="px-4 py-2.5 text-right font-medium">มูลค่า</th>
-                <th class="px-4 py-2.5 text-right font-medium">สถานะ</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in activeRows"
-                :key="getRowDocNo(row, activeDocTab) + getRowDate(row)"
-                class="hover:bg-gray-50 transition-colors"
-                style="border-bottom: 1px solid var(--color-border)"
-              >
-                <td class="px-4 py-2.5 font-mono font-medium">
-                  {{ getRowDocNo(row, activeDocTab) }}
-                </td>
-                <td class="px-4 py-2.5 whitespace-nowrap">
-                  {{ formatThaiShortDate(getRowDate(row)) }}
-                </td>
-                <td class="px-4 py-2.5 max-w-[200px] truncate" :title="row.organization || row.project || ''">
-                  {{ row.organization || row.project || '-' }}
-                </td>
-                <td class="px-4 py-2.5">{{ row.staff || row.created_by || '-' }}</td>
-                <td class="px-4 py-2.5 text-right font-mono whitespace-nowrap">
-                  {{ Number(row.grand_total || row.total || row.item_total || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}
-                </td>
-                <td class="px-4 py-2.5 text-right">
-                  <span class="px-2 py-0.5 rounded-lg text-[11px] font-medium bg-gray-100">
-                    {{ row.status || row.payment_status || '-' }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+          <!-- Document table -->
+          <div class="rounded-xl border border-gray-200 bg-white overflow-hidden flex-1">
+            <div class="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
+              <p class="text-[13px] font-semibold">
+                รายการ {{ DOC_TYPES.find((x) => x.key === activeDocTab)?.label }}
+              </p>
+              <p class="text-[11px] opacity-70">
+                {{ activeRows.length }} รายการ
+              </p>
+            </div>
 
-        <div v-else class="py-16 text-center">
-          <i class="fa-solid fa-inbox text-4xl mb-4 opacity-20"></i>
-          <p class="text-[15px] font-medium">
-            ไม่พบเอกสาร {{ DOC_TYPES.find((x) => x.key === activeDocTab)?.label }} ในช่วงที่เลือก
-          </p>
-        </div>
+            <div v-if="activeRows.length" class="overflow-x-auto max-h-[420px] overflow-y-auto">
+              <table class="w-full text-[13px] border-collapse min-w-[680px]">
+                <thead class="sticky top-0 z-10 bg-white">
+                  <tr class="border-b border-gray-200">
+                    <th class="px-4 py-2 text-left font-medium">เลขที่เอกสาร</th>
+                    <th class="px-4 py-2 text-left font-medium">วันที่สร้าง</th>
+                    <th class="px-4 py-2 text-left font-medium">คู่ค้า / โครงการ</th>
+                    <th class="px-4 py-2 text-left font-medium">Staff</th>
+                    <th class="px-4 py-2 text-right font-medium">มูลค่า</th>
+                    <th class="px-4 py-2 text-right font-medium">สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in activeRows"
+                    :key="getRowDocNo(row, activeDocTab) + getRowDate(row)"
+                    class="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                  >
+                    <td class="px-4 py-2 font-mono font-medium">{{ getRowDocNo(row, activeDocTab) }}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">{{ formatThaiShortDate(getRowDate(row)) }}</td>
+                    <td class="px-4 py-2 max-w-[180px] truncate" :title="row.organization || row.project || ''">
+                      {{ row.organization || row.project || '-' }}
+                    </td>
+                    <td class="px-4 py-2">{{ row.staff || row.created_by || '-' }}</td>
+                    <td class="px-4 py-2 text-right font-mono whitespace-nowrap">
+                      {{ Number(row.grand_total || row.total || row.item_total || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}
+                    </td>
+                    <td class="px-4 py-2 text-right">
+                      <span class="px-2 py-0.5 rounded text-[11px] bg-gray-100">
+                        {{ row.status || row.payment_status || '-' }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div v-else class="py-12 text-center">
+              <i class="fa-solid fa-inbox text-3xl mb-3 opacity-20"></i>
+              <p class="text-[13px]">
+                ไม่พบเอกสารในช่วง {{ rangeLabel }}
+              </p>
+            </div>
+          </div>
+        </template>
       </div>
-    </template>
+
+      <!-- Right: compact date picker -->
+      <aside class="xl:w-[260px] shrink-0">
+        <div class="rounded-xl border border-gray-200 bg-white p-3 xl:sticky xl:top-4">
+          <p class="text-[12px] font-bold mb-3 flex items-center gap-1.5">
+            <i class="fa-solid fa-calendar-days text-[11px]"></i>
+            เลือกช่วงวันที่
+          </p>
+
+          <!-- Mini calendar -->
+          <div class="flex items-center justify-between mb-2">
+            <button type="button" class="w-7 h-7 rounded border border-gray-300 hover:bg-gray-50 flex items-center justify-center" @click="prevMonth">
+              <i class="fa-solid fa-chevron-left text-[9px]"></i>
+            </button>
+            <span class="text-[11px] font-semibold">{{ calendarMonthLabel }}</span>
+            <button type="button" class="w-7 h-7 rounded border border-gray-300 hover:bg-gray-50 flex items-center justify-center" @click="nextMonth">
+              <i class="fa-solid fa-chevron-right text-[9px]"></i>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-7 gap-0.5 mb-0.5">
+            <div v-for="wd in WEEKDAYS" :key="wd" class="text-center text-[9px] font-semibold py-0.5 opacity-60">
+              {{ wd }}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-7 gap-0.5 mb-3">
+            <button
+              v-for="cell in calendarDays"
+              :key="cell.key + cell.day"
+              type="button"
+              class="relative h-7 rounded text-[10px] font-medium transition-colors flex items-center justify-center"
+              :class="[
+                cell.outside ? 'opacity-30' : '',
+                isInRange(cell.key) ? '' : 'hover:bg-gray-100',
+                isRangeEdge(cell.key) ? 'ring-1 ring-black font-bold' : '',
+                isToday(cell.key) && !isInRange(cell.key) ? 'underline' : '',
+              ]"
+              :style="{
+                background: isInRange(cell.key)
+                  ? isRangeEdge(cell.key) ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.07)'
+                  : 'transparent',
+              }"
+              @click="onDayClick(cell.key)"
+            >
+              {{ cell.day }}
+              <span
+                v-if="cell.count > 0"
+                class="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-black opacity-50"
+              ></span>
+            </button>
+          </div>
+
+          <p class="text-[10px] mb-2 opacity-60 leading-snug">
+            คลิกวันแรก แล้วคลิกวันที่สองเพื่อเลือกช่วง
+          </p>
+
+          <div class="space-y-2">
+            <label class="block">
+              <span class="text-[10px] font-medium mb-0.5 block">ตั้งแต่</span>
+              <input
+                v-model="filterFrom"
+                type="date"
+                class="w-full px-2 py-1.5 rounded border border-gray-300 bg-white text-[12px] focus:outline-none focus:ring-1 focus:ring-gray-400"
+                @change="onDateInputChange"
+              />
+            </label>
+            <label class="block">
+              <span class="text-[10px] font-medium mb-0.5 block">ถึง</span>
+              <input
+                v-model="filterTo"
+                type="date"
+                class="w-full px-2 py-1.5 rounded border border-gray-300 bg-white text-[12px] focus:outline-none focus:ring-1 focus:ring-gray-400"
+                @change="onDateInputChange"
+              />
+            </label>
+          </div>
+
+          <div class="mt-3 pt-3 border-t border-gray-200">
+            <p class="text-[10px] font-medium mb-1.5">ช่วงที่เลือก</p>
+            <p class="text-[12px] font-semibold leading-snug">{{ rangeLabel }}</p>
+            <p class="text-[11px] mt-1">{{ loading ? '—' : rangeTotal }} ฉบับ</p>
+          </div>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>
 
