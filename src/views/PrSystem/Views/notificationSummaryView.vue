@@ -74,6 +74,40 @@ function getRowsByType(type) {
   return trcloudStore.pvRows
 }
 
+function getRowItemName(row) {
+  const name =
+    row.description ||
+    row.invoice_note ||
+    row.item_name ||
+    row.product_name ||
+    row.title ||
+    row.remark ||
+    row.note ||
+    row.detail ||
+    ''
+  return String(name).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || '-'
+}
+
+// ยอดค้างชำระ: คืนค่าเฉพาะเอกสารที่มีข้อมูลการชำระ (AP/PV) — PR/PO คืน null → แสดง "-"
+function getRowOutstanding(row) {
+  const hasPaymentInfo =
+    row.payment != null ||
+    row.remain != null ||
+    row.balance != null ||
+    row.payment_status != null ||
+    row.status === 'Debtor'
+  if (!hasPaymentInfo) return null
+
+  const total = Number(row.grand_total || row.total || row.item_total || 0)
+  let remain
+  if (row.remain != null && row.remain !== '') remain = Number(row.remain)
+  else if (row.balance != null && row.balance !== '') remain = Number(row.balance)
+  else remain = total - Number(row.payment || row.payment_amount || 0)
+
+  if (!Number.isFinite(remain)) return null
+  return remain < 0 ? 0 : remain
+}
+
 function getPeriodBounds(key) {
   const now = new Date()
   const today = ymd(now)
@@ -457,14 +491,16 @@ onUnmounted(() => {
             </div>
 
             <div v-if="activeRows.length" class="overflow-x-auto max-h-[420px] overflow-y-auto">
-              <table class="w-full text-[13px] border-collapse min-w-[680px]">
+              <table class="w-full text-[13px] border-collapse min-w-[920px]">
                 <thead class="sticky top-0 z-10 bg-white">
                   <tr class="border-b border-gray-200">
                     <th class="px-4 py-2 text-left font-medium">เลขที่เอกสาร</th>
                     <th class="px-4 py-2 text-left font-medium">วันที่สร้าง</th>
                     <th class="px-4 py-2 text-left font-medium">คู่ค้า / โครงการ</th>
+                    <th class="px-4 py-2 text-left font-medium">ชื่อรายการ</th>
                     <th class="px-4 py-2 text-left font-medium">Staff</th>
                     <th class="px-4 py-2 text-right font-medium">มูลค่า</th>
+                    <th class="px-4 py-2 text-right font-medium">ยอดค้างชำระ</th>
                     <th class="px-4 py-2 text-right font-medium">สถานะ</th>
                   </tr>
                 </thead>
@@ -476,12 +512,21 @@ onUnmounted(() => {
                   >
                     <td class="px-4 py-2 font-mono font-medium">{{ getRowDocNo(row, activeDocTab) }}</td>
                     <td class="px-4 py-2 whitespace-nowrap">{{ formatThaiShortDate(getRowDate(row)) }}</td>
-                    <td class="px-4 py-2 max-w-[180px] truncate" :title="row.organization || row.project || ''">
+                    <td class="px-4 py-2 min-w-[200px] max-w-[320px]" style="white-space: normal; word-break: break-word" :title="row.organization || row.project || ''">
                       {{ row.organization || row.project || '-' }}
+                    </td>
+                    <td class="px-4 py-2 min-w-[240px] max-w-[360px]" style="white-space: normal; word-break: break-word" :title="getRowItemName(row)">
+                      {{ getRowItemName(row) }}
                     </td>
                     <td class="px-4 py-2">{{ row.staff || row.created_by || '-' }}</td>
                     <td class="px-4 py-2 text-right font-mono whitespace-nowrap">
                       {{ Number(row.grand_total || row.total || row.item_total || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}
+                    </td>
+                    <td
+                      class="px-4 py-2 text-right font-mono whitespace-nowrap"
+                      :style="{ color: getRowOutstanding(row) > 0 ? '#dc2626' : undefined }"
+                    >
+                      {{ getRowOutstanding(row) == null ? '-' : Number(getRowOutstanding(row)).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}
                     </td>
                     <td class="px-4 py-2 text-right">
                       <span class="px-2 py-0.5 rounded text-[11px] bg-gray-100">
