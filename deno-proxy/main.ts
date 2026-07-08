@@ -40,9 +40,11 @@ function readSetCookie(headers: Headers, name: string): string {
 
 /** login TRCloud แล้วคืน cookie header `trcloud=<deviceId>; PHPSESSID=<sessionId>` */
 async function trcloudLogin(): Promise<string> {
-  const username = Deno.env.get('TRCLOUD_USERNAME')
-  const password = Deno.env.get('TRCLOUD_PASSWORD')
-  const deviceId = Deno.env.get('TRCLOUD_DEVICE_ID')
+  // trim() กันขยะที่ติดมาตอน paste ค่าใน dashboard (เว้นวรรค/newline ต่อท้าย) —
+  // ถ้าไม่ตัด password จะกลายเป็น "dw12345\n" แล้ว TRCloud ตอบ "wrong"
+  const username = Deno.env.get('TRCLOUD_USERNAME')?.trim()
+  const password = Deno.env.get('TRCLOUD_PASSWORD')?.trim()
+  const deviceId = Deno.env.get('TRCLOUD_DEVICE_ID')?.trim()
 
   if (!username || !password || !deviceId) {
     throw new Error('ขาด env: TRCLOUD_USERNAME / TRCLOUD_PASSWORD / TRCLOUD_DEVICE_ID')
