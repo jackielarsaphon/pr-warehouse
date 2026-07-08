@@ -126,19 +126,6 @@ Deno.serve(async (req: Request) => {
     })
   }
 
-  // TEMP debug: รายงานความยาว env (ไม่โชว์ค่าจริง) เพื่อไล่ปัญหา auto-login — ลบออกทีหลัง
-  if (url.pathname === '/envcheck') {
-    const u = Deno.env.get('TRCLOUD_USERNAME') || ''
-    const p = Deno.env.get('TRCLOUD_PASSWORD') || ''
-    const d = Deno.env.get('TRCLOUD_DEVICE_ID') || ''
-    return new Response(JSON.stringify({
-      username: { raw: u.length, trimmed: u.trim().length },
-      password: { raw: p.length, trimmed: p.trim().length },
-      deviceId: { raw: d.length, trimmed: d.trim().length },
-      hasTrimBuild: true,
-    }), { status: 200, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
-  }
-
   // proxy paths:
   //   /p?path=<encoded TRCloud path>      (production — เลี่ยง static layer ของ Deno ที่ดัก path เหมือนไฟล์)
   //   /trcloud-api/<path>                 (เผื่อ dev/legacy)
