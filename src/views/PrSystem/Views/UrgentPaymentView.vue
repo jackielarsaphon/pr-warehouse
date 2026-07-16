@@ -277,8 +277,6 @@ async function loadRows() {
     searching: false,
     saving: false,
   }))
-  // sync ทุกรายการขึ้นชีทเมื่อโหลดหน้า
-  if (rows.value.length) scheduleAutoSync(1200)
 }
 
 async function addRow() {
@@ -762,12 +760,10 @@ async function syncToSheets() {
         }
       }),
     }
-    // text/plain หลีกเลี่ยง CORS preflight ของ Google Apps Script
     await fetch(SHEETS_URL, {
       method: 'POST',
       mode: 'no-cors',
-      redirect: 'follow',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
     syncMsg.value = `✓ Sync แล้ว ${rows.value.length} รายการ`
