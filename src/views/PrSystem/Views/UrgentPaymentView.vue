@@ -286,12 +286,14 @@ async function addRow() {
   const { error } = await supabase.from(TABLE).insert(toDbPayload(row))
   row.saving = false
   if (error) dbError.value = error.message
+  else scheduleAutoSync(800)
 }
 
 async function deleteRow(id) {
   rows.value = rows.value.filter(r => r.id !== id)
   const { error } = await supabase.from(TABLE).delete().eq('id', id)
   if (error) dbError.value = error.message
+  else scheduleAutoSync(800)
 }
 
 function onFieldChange(row) {
@@ -302,7 +304,7 @@ function onFieldChange(row) {
     const { error } = await supabase.from(TABLE).upsert(toDbPayload(row))
     row.saving = false
     if (error) dbError.value = error.message
-    else if (isFlagged(row.id)) scheduleAutoSync(800)
+    else scheduleAutoSync(800)
   }, 600)
 }
 
@@ -489,6 +491,7 @@ async function confirmBulkPaste() {
     bulkProgress.value.done++
   }
   bulkProgress.value.running = false
+  scheduleAutoSync(800)
 }
 
 // ประมาณการ THB per row
@@ -735,7 +738,7 @@ async function syncToSheets() {
     ]
     const payload = {
       headers,
-      rows: rows.value.filter(r => isFlagged(r.id)).map(r => {
+      rows: rows.value.map(r => {
         const approx = (parseFloat(r.kip || 0) / rates.value.KIP) + parseFloat(r.thb || 0) + (parseFloat(r.usd || 0) * rates.value.USD)
         return {
           doc_number: r.doc_number,
@@ -763,8 +766,7 @@ async function syncToSheets() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    const flaggedCount = rows.value.filter(r => isFlagged(r.id)).length
-    syncMsg.value = `✓ Sync แล้ว ${flaggedCount} รายการจ่ายด่วน`
+    syncMsg.value = `✓ Sync แล้ว ${rows.value.length} รายการ`
   } catch (err) {
     syncMsg.value = '✗ Sync ล้มเหลว: ' + (err.message || err)
   } finally {
@@ -773,7 +775,7 @@ async function syncToSheets() {
   }
 }
 
-// ─── Auto-sync: trigger syncToSheets whenever flagged rows change ─────────
+// ─── Auto-sync: trigger syncToSheets whenever rows change ─────────
 let autoSyncTimer = null
 function scheduleAutoSync(delay = 1500) {
   clearTimeout(autoSyncTimer)
