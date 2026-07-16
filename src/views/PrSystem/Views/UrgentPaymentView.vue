@@ -395,6 +395,44 @@ function lookupDoc(q) {
   return null
 }
 
+function hasDocumentInTrcloud(docNumber) {
+  return Boolean(lookupDoc(docNumber || ''))
+}
+
+async function pruneMissingRows() {
+  if (!rows.value.length) return
+  const toDelete = rows.value.filter((r) => {
+    const doc = String(r.doc_number || '').trim()
+    if (!doc) return false
+    return !hasDocumentInTrcloud(doc)
+  })
+  if (!toDelete.length) return
+
+  const deleteIds = toDelete.map((r) => r.id)
+  const deleteDocNumbers = toDelete.map((r) => r.doc_number).filter(Boolean)
+
+  rows.value = rows.value.filter((r) => !deleteIds.includes(r.id))
+  flaggedIds.value = flaggedIds.value.filter((id) => !deleteIds.includes(id))
+  const byMap = { ...flaggedByMap.value }
+  for (const id of deleteIds) delete byMap[id]
+  flaggedByMap.value = byMap
+
+  const { error } = await supabase.from(TABLE).delete().in('id', deleteIds)
+  if (error) {
+    dbError.value = `ลบเอกสารที่ไม่พบไม่สำเร็จ: ${error.message}`
+    return
+  }
+
+  await supabase
+    .from(FLAGGED_TABLE)
+    .delete()
+    .eq('doc_type', FLAGGED_DOC_TYPE)
+    .in('doc_key', deleteIds)
+
+  scheduleAutoSync(500)
+  console.warn('[urgent-payment] removed missing documents:', deleteDocNumbers.join(', '))
+}
+
 async function onDocNumberInput(row) {
   const q = row.doc_number.trim()
   if (!q || q.length < 4) return
@@ -691,16 +729,17 @@ function handleRealtimeChange(payload) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadRates()
-  loadFlagged()
-  loadRows()
-  loadTracking()
+  await Promise.all([loadFlagged(), loadRows(), loadTracking()])
   // re-fetch ทุกครั้งที่เปิดหน้า เพื่อให้สถานะจ่ายเงินอัพเดทเสมอ
-  trcloudStore.fetchTrcloudData('ap')
-  trcloudStore.fetchTrcloudData('po')
-  trcloudStore.fetchTrcloudData('expense')
-  trcloudStore.fetchTrcloudData('pv')
+  await Promise.all([
+    trcloudStore.fetchTrcloudData('ap'),
+    trcloudStore.fetchTrcloudData('po'),
+    trcloudStore.fetchTrcloudData('expense'),
+    trcloudStore.fetchTrcloudData('pv'),
+  ])
+  await pruneMissingRows()
 
   realtimeChannel = supabase
     .channel('urgent_payment_rows_rt')
