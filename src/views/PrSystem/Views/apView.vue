@@ -5,6 +5,14 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { formatDocNo } from '@/utils/docNumber'
 import { useDebounced } from '@/composables/useDebounced'
+import Swal from 'sweetalert2'
+
+// toast แจ้งเตือนมุมขวาบน (ไม่บล็อกการทำงาน)
+function urgentToast(icon, title) {
+  try {
+    Swal.fire({ toast: true, position: 'top-end', icon, title, showConfirmButton: false, timer: 2600, timerProgressBar: true })
+  } catch (e) {}
+}
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -288,7 +296,11 @@ async function addToUrgentPayment(apRow) {
       .select('id')
       .eq('doc_number', docNo)
       .limit(1)
-    if (existing && existing.length) return // มีแถวนี้อยู่แล้ว ไม่เพิ่มซ้ำ
+    if (existing && existing.length) {
+      // มีอยู่แล้ว → เตือน ไม่เพิ่มซ้ำ
+      urgentToast('warning', `${docNo} มีในหน้าจ่ายด่วนอยู่แล้ว — ไม่เพิ่มซ้ำ`)
+      return
+    }
 
     const cur = String(apRow.currency || apRow.fx || 'LAK').toUpperCase()
     const amt = String(apRow.grand_total || apRow.total || '')
@@ -306,7 +318,8 @@ async function addToUrgentPayment(apRow) {
       staff: auth.user?.fullname || auth.user?.username || '',
       status: 'ตามของ',
     }
-    await supabase.from('urgent_payment_rows').insert(payload)
+    const { error } = await supabase.from('urgent_payment_rows').insert(payload)
+    if (!error) urgentToast('success', `เพิ่ม ${docNo} เข้าหน้าจ่ายด่วนแล้ว`)
   } catch (e) { /* เงียบไว้ ไม่ให้กระทบการติดตาม */ }
 }
 
