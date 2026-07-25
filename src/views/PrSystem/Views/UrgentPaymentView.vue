@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
+import { formatDocNo } from '@/utils/docNumber'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -254,6 +255,64 @@ async function unflag(id) {
     return
   }
   scheduleAutoSync(500)
+}
+
+// ─── รายการที่ถูก "ติดตาม" มาจากหน้า AP (trcloud_tracking, doc_type='ap') ───
+// อ่านอย่างเดียว โชว์ AP ที่ถูกกดติดตามไว้ให้จ่ายด่วน — ทุกอย่าง try/catch กันหน้าพัง
+const AP_TRACK_DOC_TYPE = 'ap'
+const apTrackedKeys = ref([])
+
+function apIdentity(row) {
+  return String(row?.unique_id || row?.item_id || row?.invoice_number || row?.expense_id || row?.id || '')
+}
+function apRowIdentities(row) {
+  return [row?.unique_id, row?.invoice_number, row?.document_number, row?.expense_id, row?.item_id, row?.id]
+    .map((v) => String(v ?? '').trim())
+    .filter(Boolean)
+}
+function isApPaid(row) {
+  const s = String(row?.payment_status || row?.status || '').toLowerCase()
+  return s.includes('ชำระแล้ว') || s.includes('paid') || s.includes('complete') || s.includes('success') || s.includes('อนุมัติ')
+}
+
+async function loadApTracked() {
+  try {
+    const { data } = await supabase
+      .from(FLAGGED_TABLE) // 'trcloud_tracking'
+      .select('doc_key')
+      .eq('doc_type', AP_TRACK_DOC_TYPE)
+    apTrackedKeys.value = (data || []).map((r) => String(r.doc_key || '')).filter(Boolean)
+  } catch (e) { /* เงียบไว้ ไม่ให้กระทบหน้า */ }
+}
+
+const apTrackedRows = computed(() => {
+  try {
+    if (!apTrackedKeys.value.length) return []
+    const keySet = new Set(apTrackedKeys.value)
+    const src = Array.isArray(trcloudStore.apRows) ? trcloudStore.apRows : []
+    const seen = new Set()
+    const out = []
+    for (const r of src) {
+      if (!apRowIdentities(r).some((id) => keySet.has(id))) continue
+      const uid = apIdentity(r)
+      if (uid && seen.has(uid)) continue
+      seen.add(uid)
+      out.push(r)
+    }
+    return out
+  } catch (e) { return [] }
+})
+
+function apTrackedThb(row) {
+  try {
+    const cur = String(row?.currency || row?.fx || 'LAK').toUpperCase()
+    const amt = parseFloat(row?.grand_total || row?.total || 0)
+    if (!amt) return ''
+    let thb = amt
+    if (cur === 'LAK' || cur === 'KIP') thb = amt / (rates.value.KIP || 1)
+    else if (cur === 'USD') thb = amt * (rates.value.USD || 1)
+    return thb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  } catch (e) { return '' }
 }
 
 async function loadRows() {
@@ -731,7 +790,7 @@ function handleRealtimeChange(payload) {
 
 onMounted(async () => {
   loadRates()
-  await Promise.all([loadFlagged(), loadRows(), loadTracking()])
+  await Promise.all([loadFlagged(), loadRows(), loadTracking(), loadApTracked()])
   // re-fetch ทุกครั้งที่เปิดหน้า เพื่อให้สถานะจ่ายเงินอัพเดทเสมอ
   await Promise.all([
     trcloudStore.fetchTrcloudData('ap'),
@@ -739,7 +798,10 @@ onMounted(async () => {
     trcloudStore.fetchTrcloudData('expense'),
     trcloudStore.fetchTrcloudData('pv'),
   ])
-  await pruneMissingRows()
+  // ปิด auto-prune: หลังย้ายมาอ่านจาก warehouse (โหลดแค่ช่วงวันที่) ใบเก่านอกช่วงจะถูกมองว่า
+  // "หายจาก TRCloud" แล้วโดนซ่อน/ลบมั่ว ๆ ตามจังหวะโหลด → เป็นเหตุให้รายการหาย ๆ กลับ ๆ
+  // ถ้าต้องการล้างใบที่ไม่มีจริง ให้ทำแบบ manual หรือออกแบบใหม่ให้เช็คกับ warehouse ทั้งก้อน
+  // await pruneMissingRows()
 
   realtimeChannel = supabase
     .channel('urgent_payment_rows_rt')
@@ -923,6 +985,48 @@ onUnmounted(() => {
         THB
       </label>
       <span style="color: var(--color-text-muted)">ประมาณ THB = KIP÷{{ rates.KIP }} + THB + USD×{{ rates.USD }}</span>
+    </div>
+
+    <!-- 📌 รายการที่ติดตามมาจากหน้า AP (อ่านอย่างเดียว) -->
+    <div v-if="apTrackedRows.length" class="rounded-xl border overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
+      <div class="flex items-center gap-2 px-4 py-2.5 border-b" style="border-color: var(--color-border); background: rgba(239,68,68,0.06)">
+        <i class="fa-solid fa-thumbtack text-red-500"></i>
+        <span class="text-[13px] font-semibold" style="color: var(--color-text-primary)">ติดตามจากหน้า AP</span>
+        <span class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-red-500 text-white">{{ apTrackedRows.length }}</span>
+        <span class="text-[11px] hidden sm:inline" style="color: var(--color-text-muted)">— รายการ AP ที่ถูกกด “ติดตาม” ไว้ให้จ่ายด่วน</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-[12px] border-collapse">
+          <thead>
+            <tr style="background: var(--color-bg-body)">
+              <th class="px-3 py-2 text-left font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">เลขที่เอกสาร</th>
+              <th class="px-3 py-2 text-left font-semibold" style="color: var(--color-text-muted)">ร้านค้า</th>
+              <th class="px-3 py-2 text-left font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">วันที่</th>
+              <th class="px-3 py-2 text-right font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">ยอด</th>
+              <th class="px-3 py-2 text-right font-semibold whitespace-nowrap text-green-600">≈ THB</th>
+              <th class="px-3 py-2 text-center font-semibold whitespace-nowrap" style="color: var(--color-text-muted)">สถานะจ่าย</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in apTrackedRows" :key="apIdentity(r)" style="border-top: 1px solid var(--color-border)">
+              <td class="px-3 py-2 font-mono font-medium whitespace-nowrap" style="color:#f59e0b">{{ formatDocNo(r, 'AP') }}</td>
+              <td class="px-3 py-2" style="color: var(--color-text-primary)">{{ r.organization || r.name || '-' }}</td>
+              <td class="px-3 py-2 whitespace-nowrap" style="color: var(--color-text-muted)">{{ r.issue_date || '-' }}</td>
+              <td class="px-3 py-2 text-right font-mono whitespace-nowrap" style="color: var(--color-text-primary)">
+                {{ Number(r.grand_total || 0).toLocaleString('th-TH') }}
+                <span class="text-[10px]" style="color: var(--color-text-muted)">{{ String(r.currency || r.fx || 'LAK').toUpperCase() }}</span>
+              </td>
+              <td class="px-3 py-2 text-right font-mono text-green-600 whitespace-nowrap">{{ apTrackedThb(r) }}</td>
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                  :style="isApPaid(r) ? 'background:rgba(16,185,129,0.15);color:#10b981' : 'background:rgba(239,68,68,0.15);color:#ef4444'">
+                  {{ isApPaid(r) ? 'จ่ายแล้ว' : 'ยังไม่ได้จ่าย' }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Filter + stats bar -->
