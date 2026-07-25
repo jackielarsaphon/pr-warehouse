@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useTrcloudStore } from '@/stores/trcloud'
+import { formatDocNo } from '@/utils/docNumber'
+import { useDebounced } from '@/composables/useDebounced'
 
 const props = defineProps({
   initialTab: { type: String, default: 'pr' },
@@ -28,6 +30,7 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
+const debouncedFilter = useDebounced(trcloudFilter, 250)
 const _viewMode = ref('all')
 
 // ✅ เมื่อสลับไปหน้า 'tracking' ให้ rebuild frozenOrder ใหม่
@@ -207,7 +210,7 @@ async function fetchTrcloudData() {
 // ล้างข้อมูลทุกครั้งที่ข้อมูลใน Store เปลี่ยนแปลง
 watch(() => trcloudStore.prRows, () => {
   cleanupTrackedIds()
-}, { deep: true })
+})
 
 onMounted(() => {
   loadTrackedRowIdsFromCloud()
@@ -238,7 +241,7 @@ watch(
     // แต่จะไม่ถูกเรียกตอนแค่ติ๊ก checkbox เพราะ prRows ไม่เปลี่ยน
     buildFrozenOrder(rows)
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 const filteredTrcloudRows = computed(() => {
@@ -279,8 +282,8 @@ const filteredTrcloudRows = computed(() => {
     result = result.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter
-  const q = trcloudFilter.value.toLowerCase().trim()
+  // Search filter (ใช้ค่า debounce)
+  const q = debouncedFilter.value.toLowerCase().trim()
   if (q) {
     result = result.filter(r =>
       JSON.stringify(r).toLowerCase().includes(q)
@@ -524,7 +527,7 @@ function getDisplayBadgeInfo(row) {
               <td colspan="10" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
+                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
                 </div>
               </td>
             </tr>
@@ -542,7 +545,7 @@ function getDisplayBadgeInfo(row) {
               class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
             >
-              <td class="px-4 py-3 font-medium font-mono" style="color: #00d4ff; border-right: 1px solid var(--color-border)">{{ r.document_number || r.pr_id || '-' }}</td>
+              <td class="px-4 py-3 font-medium font-mono" style="color: #00d4ff; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PR') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>

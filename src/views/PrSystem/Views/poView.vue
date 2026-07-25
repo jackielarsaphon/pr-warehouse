@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+import { formatDocNo } from '@/utils/docNumber'
+import { useDebounced } from '@/composables/useDebounced'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -17,6 +19,7 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
+const debouncedFilter = useDebounced(trcloudFilter, 250)
 const viewMode = ref('all') // 'all' or 'tracking'
 const projectFilter = ref('')
 const statusFilter = ref('')
@@ -139,15 +142,16 @@ const trcloudKpi = computed(() => {
   }
 })
 
-async function fetchTrcloudData() {
-  await trcloudStore.fetchTrcloudData('po')
+async function fetchTrcloudData(force = false) {
+  // force=true (กดปุ่ม) = ดึงเร็วจาก TRCloud; force=false (ตอน mount) = อ่านจาก Supabase
+  await trcloudStore.fetchTrcloudData('po', { force })
   cleanupTrackedIds()
 }
 
 // ล้างข้อมูลทุกครั้งที่ข้อมูลใน Store เปลี่ยนแปลง
 watch(() => trcloudStore.poRows, () => {
   cleanupTrackedIds()
-}, { deep: true })
+})
 
 onMounted(() => {
   loadTrackedRowIdsFromCloud()
@@ -173,7 +177,7 @@ watch(
       setTrackedCloud(removedIds, false)
     }
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 // --- Helper: หา row identity (unique_id) ---
@@ -260,8 +264,8 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter
-  const q = trcloudFilter.value.toLowerCase().trim()
+  // Search filter (ใช้ค่า debounce)
+  const q = debouncedFilter.value.toLowerCase().trim()
   if (q) {
     rows = rows.filter(r =>
       JSON.stringify(r).toLowerCase().includes(q)
@@ -432,7 +436,7 @@ function getDisplayBadgeInfo(row) {
           </select>
         </div>
 
-        <button @click="fetchTrcloudData" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+        <button @click="fetchTrcloudData(true)" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
           <i class="fa-solid fa-rotate mr-1" :class="trcloudLoading ? 'fa-spin' : ''"></i>
           ดึงข้อมูล
         </button>
@@ -467,7 +471,7 @@ function getDisplayBadgeInfo(row) {
               <td colspan="11" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
+                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
                 </div>
               </td>
             </tr>
@@ -480,7 +484,7 @@ function getDisplayBadgeInfo(row) {
               class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
             >
-              <td class="px-4 py-3 font-medium font-mono" style="color: #7c3aed; border-right: 1px solid var(--color-border)">{{ r.document_number || r.po_id || '-' }}</td>
+              <td class="px-4 py-3 font-medium font-mono" style="color: #7c3aed; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PO') }}</td>
               <td class="px-4 py-3 font-mono" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.expense || r.expense_no || r.expense_number || r.expense_doc || r.expense_id || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>

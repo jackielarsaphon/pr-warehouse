@@ -143,10 +143,18 @@ class MockQuery {
     this.filters = [] // array of (row) => bool
     this._order = null
     this._limit = null
+    this._range = null // { from, to } (จาก .range())
+    this._count = null // 'exact' | 'planned' | 'estimated'
+    this._head = false // .select(_, { head: true }) → เอาแค่ count ไม่เอาแถว
     this._single = null // 'single' | 'maybe'
   }
 
-  select() { if (!this.op) this.op = 'select'; return this }
+  select(_cols, opts = {}) {
+    if (!this.op) this.op = 'select'
+    if (opts && opts.count) this._count = opts.count
+    if (opts && opts.head) this._head = true
+    return this
+  }
   insert(payload) { this.op = 'insert'; this.payload = payload; return this }
   upsert(payload, opts = {}) { this.op = 'upsert'; this.payload = payload; this.conflictCol = opts.onConflict || null; return this }
   update(payload) { this.op = 'update'; this.payload = payload; return this }
@@ -171,6 +179,7 @@ class MockQuery {
   }
   order(col, opts = {}) { this._order = { col, ascending: opts.ascending !== false }; return this }
   limit(n) { this._limit = n; return this }
+  range(from, to) { this._range = { from: Number(from) || 0, to: Number(to) || 0 }; return this }
   single() { this._single = 'single'; return this }
   maybeSingle() { this._single = 'maybe'; return this }
 
@@ -227,11 +236,20 @@ class MockQuery {
           return 0
         })
       }
+      // .range(from, to) — inclusive เหมือน supabase-js
+      if (this._range) result = result.slice(this._range.from, this._range.to + 1)
       if (this._limit != null) result = result.slice(0, this._limit)
     }
 
-    // deep copy ผลลัพธ์เพื่อไม่ให้แก้กระทบ DB ภายในโดยตรง
-    const data = result.map((r) => ({ ...r }))
+    // จำนวนแถวที่ match (ก่อน head ตัดทิ้ง) — ใช้ตอบ { count } ให้ .select(_, { count })
+    const matchedCount = (this.op === 'select') ? result.length : null
+
+    // deep copy ผลลัพธ์เพื่อไม่ให้แก้กระทบ DB ภายในโดยตรง (head:true = เอาแค่ count)
+    const data = (this.op === 'select' && this._head) ? [] : result.map((r) => ({ ...r }))
+
+    if (this._count) {
+      return { data, count: matchedCount, error: null }
+    }
 
     if (this._single === 'single') {
       if (data.length === 1) return { data: data[0], error: null }

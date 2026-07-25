@@ -32,6 +32,9 @@ dist-ssr/
 *.sln
 *.sw?
 
+# Local backups (โค้ด/ข้อมูล ก่อน deploy) — ห้าม commit
+backups/
+
 # Project specific
 TableStuctureSupabase.txt
 # (Optional: If you want to keep TableStuctureSupabase.txt on GitHub, remove the line above)

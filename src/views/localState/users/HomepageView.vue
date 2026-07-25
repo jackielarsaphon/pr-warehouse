@@ -7,6 +7,7 @@ import { useRoute } from 'vue-router'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
+import { downloadElementAsPdf } from '@/lib/exportPdf'
 
 const ui = useUiStore()
 
@@ -32,6 +33,7 @@ const modalLoading  = ref(false)
 const modalOrder    = ref(null)   // full order row
 const modalItems    = ref([])     // order_req_items joined with items
 const showPrintMenu = ref(false)
+const isGeneratingPdf = ref(false)
 const isOrderExpired = ref(false)
 
 // ─── Highlight Logic ──────────────────────────────────────────────────────────
@@ -288,9 +290,24 @@ function triggerPrint() {
   nextTick(() => window.print())
 }
 
-function exportAsPdfDocument() {
+async function exportAsPdfDocument() {
   showPrintMenu.value = false
-  nextTick(() => window.print())
+  const el = document.getElementById('print-area-detail')
+  if (!el) {
+    ui.showToast('ไม่พบเนื้อหาเอกสาร', 'warning')
+    return
+  }
+  isGeneratingPdf.value = true
+  try {
+    await nextTick()
+    const id = modalOrder.value?.request_id || modalOrder.value?.id || 'document'
+    await downloadElementAsPdf(el, `withdraw-${id}.pdf`)
+    ui.showToast('ดาวน์โหลด PDF สำเร็จ', 'success')
+  } catch (err) {
+    ui.showToast(err?.message || 'สร้าง PDF ไม่สำเร็จ', 'error')
+  } finally {
+    isGeneratingPdf.value = false
+  }
 }
 
 function loadJsBarcode() {
@@ -602,8 +619,9 @@ const totalAmount = () => modalItems.value.reduce((sum, item) => sum + (Number(i
                   <span class="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center"><i class="fa-solid fa-print text-blue-600 text-[12px]"></i></span> พิมพ์เอกสาร (Print)
                 </button>
                 <div class="h-px bg-gray-100 dark:bg-slate-700 mx-3"></div>
-                <button @click="exportAsPdfDocument" class="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors text-left">
-                  <span class="w-7 h-7 rounded-lg bg-red-100 dark:bg-red-900/40 flex items-center justify-center"><i class="fa-solid fa-file-pdf text-red-600 text-[12px]"></i></span> บันทึกเป็น PDF
+                <button @click="exportAsPdfDocument" :disabled="isGeneratingPdf" class="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700/60 transition-colors text-left disabled:opacity-50">
+                  <span class="w-7 h-7 rounded-lg bg-red-100 dark:bg-red-900/40 flex items-center justify-center"><i class="fa-solid fa-file-pdf text-red-600 text-[12px]"></i></span>
+                  {{ isGeneratingPdf ? 'กำลังสร้าง PDF...' : 'บันทึกเป็น PDF' }}
                 </button>
               </div>
             </Transition>

@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+import { formatDocNo } from '@/utils/docNumber'
+import { useDebounced } from '@/composables/useDebounced'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -17,6 +19,7 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
+const debouncedFilter = useDebounced(trcloudFilter, 250) // ค้นหาแบบหน่วง ลดการ filter ทุกคีย์
 const viewMode = ref('all') // 'all' or 'tracking'
 const projectFilter = ref('')
 const statusFilter = ref('')
@@ -117,8 +120,9 @@ const trcloudKpi = computed(() => {
   }
 })
 
-async function fetchTrcloudData() {
-  await trcloudStore.fetchTrcloudData('ap')
+async function fetchTrcloudData(force = false) {
+  // force=true (กดปุ่ม) = ดึงเร็วจาก TRCloud; force=false (ตอน mount) = อ่านจาก Supabase
+  await trcloudStore.fetchTrcloudData('ap', { force })
 }
 
 onMounted(() => {
@@ -145,7 +149,7 @@ watch(
       removedIds.forEach((id) => setTrackedCloud(id, false))
     }
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 const filteredTrcloudRows = computed(() => {
@@ -185,10 +189,10 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter
-  const q = trcloudFilter.value.toLowerCase().trim()
+  // Search filter (ใช้ค่า debounce)
+  const q = debouncedFilter.value.toLowerCase().trim()
   if (q) {
-    rows = rows.filter(r => 
+    rows = rows.filter(r =>
       JSON.stringify(r).toLowerCase().includes(q)
     )
   }
@@ -347,6 +351,12 @@ function getDisplayBadgeInfo(row) {
       </button>
     </div>
 
+    <!-- Hint: ติดตาม → เข้าหน้าจ่ายด่วน -->
+    <div class="flex items-start gap-2 mb-6 px-3 py-2.5 rounded-lg text-[12px] border" style="background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.25); color: var(--color-text-muted)">
+      <i class="fa-solid fa-circle-info text-blue-500 mt-0.5"></i>
+      <span>ติ๊ก <b style="color:#ef4444">“ติดตาม”</b> ที่รายการไหน รายการนั้นจะไปแสดงในหน้า <b style="color: var(--color-text-primary)">สรุปขอจ่ายด่วน</b> ให้อัตโนมัติ (เฉพาะรายการ AP)</span>
+    </div>
+
     <!-- KPI Card -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <div class="p-4 rounded-xl border relative overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
@@ -399,7 +409,7 @@ function getDisplayBadgeInfo(row) {
           </select>
         </div>
 
-        <button @click="fetchTrcloudData" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+        <button @click="fetchTrcloudData(true)" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
           <i class="fa-solid fa-rotate mr-1" :class="trcloudLoading ? 'fa-spin' : ''"></i>
           ดึงข้อมูล
         </button>
@@ -433,7 +443,7 @@ function getDisplayBadgeInfo(row) {
               <td colspan="10" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
+                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
                 </div>
               </td>
             </tr>
@@ -441,7 +451,7 @@ function getDisplayBadgeInfo(row) {
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล AP จาก TRCLOUD</td>
             </tr>
             <tr v-for="r in filteredTrcloudRows" :key="getRowIdentity(r)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
-              <td class="px-4 py-3 font-medium font-mono break-all" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ r.invoice_number || r.document_number || r.expense_id || '-' }}</td>
+              <td class="px-4 py-3 font-medium font-mono break-all" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'AP') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>

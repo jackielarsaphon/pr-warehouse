@@ -1,8 +1,0 @@
-{
-  "rewrites": [
-    {
-      "source": "/trcloud-api/:path*",
-      "destination": "/api/trcloud/:path*"
-    }
-  ]
-}

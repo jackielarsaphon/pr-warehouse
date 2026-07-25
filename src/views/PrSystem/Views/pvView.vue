@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
+import { formatDocNo } from '@/utils/docNumber'
+import { useDebounced } from '@/composables/useDebounced'
 
 const trcloudStore = useTrcloudStore()
 const trcloudPvRows = computed(() => trcloudStore.pvRows)
@@ -14,6 +16,7 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
+const debouncedFilter = useDebounced(trcloudFilter, 250)
 const monthFilter = ref('')
 const monthOptions = [
   { value: '01', label: 'มกราคม' },
@@ -39,8 +42,9 @@ const trcloudKpi = computed(() => {
   }
 })
 
-async function fetchTrcloudData() {
-  await trcloudStore.fetchTrcloudData('pv')
+async function fetchTrcloudData(force = false) {
+  // force=true (กดปุ่ม) = ดึงเร็วจาก TRCloud; force=false (ตอน mount) = อ่านจาก Supabase
+  await trcloudStore.fetchTrcloudData('pv', { force })
 }
 
 onMounted(() => {
@@ -68,7 +72,7 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  const q = trcloudFilter.value.toLowerCase().trim()
+  const q = debouncedFilter.value.toLowerCase().trim()
   if (!q) {
     // Sort by Date Descending (Newest first)
     return [...rows].sort((a, b) => {
@@ -167,7 +171,7 @@ function getDocMonth(row) {
               <option v-for="m in monthOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
             </select>
           </div>
-          <button @click="fetchTrcloudData" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+          <button @click="fetchTrcloudData(true)" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
             <i class="fa-solid fa-rotate mr-1" :class="trcloudLoading ? 'fa-spin' : ''"></i>
             ดึงข้อมูล
           </button>
@@ -202,7 +206,7 @@ function getDocMonth(row) {
               <td colspan="10" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
+                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
                 </div>
               </td>
             </tr>
@@ -210,7 +214,7 @@ function getDocMonth(row) {
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PV จาก TRCLOUD</td>
             </tr>
             <tr v-for="r in filteredTrcloudRows" :key="r.payment_id || r.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
-              <td class="px-4 py-3 font-medium font-mono" style="color: #10b981; border-right: 1px solid var(--color-border)">{{ (r.company_format || '') + (r.document_number || r.payment_id || '-') }}</td>
+              <td class="px-4 py-3 font-medium font-mono" style="color: #10b981; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PV') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>

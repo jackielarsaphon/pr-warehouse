@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { trcloudProxyExtraHeaders, trcloudProxyUrl } from '@/utils/trcloudSession'
+import { loadDocs, upsertDocs, countDocs, getSyncState, setSyncState } from '@/lib/trcloudWarehouse'
 
 export const useTrcloudStore = defineStore('trcloud', () => {
   const prRows = ref([])
@@ -419,14 +420,58 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     return expenseRows.value
   }
 
-  const getCurrentRangeKey = () => `${dateFrom.value || ''}_${dateTo.value || ''}`
+  // ══════════════════════════════════════════════════════════════════════════
+  // Data warehouse mode — TRCloud (proxy) → Supabase → หน้าเว็บอ่านจาก Supabase
+  // ──────────────────────────────────────────────────────────────────────────
+  //  • backfill ครั้งแรก = ทั้งปีปัจจุบัน (1 ม.ค. → วันนี้) เก็บลง Supabase
+  //  • หลังจากนั้นอัพเดทเฉพาะ ~1 เดือนล่าสุด (incremental) แล้ว upsert กันซ้ำด้วย unique_id
+  //  • หน้าเว็บอ่านจาก Supabase เป็นหลัก (เร็ว + ไม่ยิง proxy ซ้ำ ๆ) — proxy ใช้แค่ตอน sync
+  //  • debounce การ sync เก็บที่ Supabase (trcloud_sync_state) → แชร์กันทุกเครื่อง
+  // ──────────────────────────────────────────────────────────────────────────
 
-  // ── persistent cache: ลดการยิง proxy ──────────────────────────────────────
-  // ปัญหาเดิม: cache อยู่ใน memory เท่านั้น → reload หน้าเว็บทีไรต้องดึงใหม่ทั้ง 5 ประเภท
-  // (paginate หลายพันรายการต่อครั้ง) ทำให้ Deno proxy ใช้โควต้าหมดเร็วจนถูกระงับ
-  // แก้: เก็บผลลง localStorage แล้ว rehydrate ตอนเปิดใหม่ ถ้ายังไม่เกิน TTL ก็ไม่ต้องยิง proxy
-  const CACHE_TTL_MS = 30 * 60 * 1000 // 30 นาที (กด "ดึงข้อมูล" เพื่อ force refresh ได้ตลอด)
-  const CACHE_PREFIX = 'trcloud_cache_v1_'
+  const INCREMENTAL_DAYS = parseInt(import.meta.env.VITE_TRCLOUD_INCREMENTAL_DAYS || '31', 10)
+  // ดึงเร็ว (on-demand): หน้าต่างสั้นกว่า เพื่อให้กดปุ่มแล้วได้ข้อมูลสดไว ๆ (default 7 วัน)
+  const QUICK_DAYS = parseInt(import.meta.env.VITE_TRCLOUD_QUICK_DAYS || '7', 10)
+  const SYNC_MIN_INTERVAL_MS =
+    parseInt(import.meta.env.VITE_TRCLOUD_SYNC_MIN_INTERVAL_MIN || '15', 10) * 60 * 1000
+  const ALL_TYPES = ['pr', 'po', 'ap', 'pv', 'expense']
+
+  // สถานะ sync สำหรับ UI
+  const syncing = ref(false)
+  const syncPhase = ref('') // '' | 'backfill' | 'incremental'
+  const syncMessage = ref('')
+  const syncState = ref(null) // แถวล่าสุดจาก trcloud_sync_state
+
+  const fmtYmd = (d) => {
+    const yyyy = String(d.getFullYear())
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+  const todayYmd = () => fmtYmd(new Date())
+  const yearStartYmd = () => `${new Date().getFullYear()}-01-01`
+  const incrementalFromYmd = () => {
+    const d = new Date()
+    d.setDate(d.getDate() - INCREMENTAL_DAYS)
+    return fmtYmd(d)
+  }
+  const quickFromYmd = () => {
+    const d = new Date()
+    d.setDate(d.getDate() - QUICK_DAYS)
+    return fmtYmd(d)
+  }
+
+  const setRowsByType = (type, rows) => {
+    if (type === 'pr') prRows.value = rows
+    else if (type === 'po') poRows.value = rows
+    else if (type === 'ap') apRows.value = rows
+    else if (type === 'pv') pvRows.value = rows
+    else if (type === 'expense') expenseRows.value = rows
+  }
+
+  // ── localStorage: snapshot ของ ref ที่โหลดมาแล้ว เพื่อ paint ทันทีตอน reload ──
+  // (source of truth คือ Supabase; อันนี้แค่ cache หน้าเว็บไม่ให้จอว่างระหว่างโหลด)
+  const CACHE_PREFIX = 'trcloud_cache_v2_'
   const CACHE_TYPES = ['pr', 'po', 'ap', 'pv', 'expense']
 
   function persistMeta() {
@@ -440,12 +485,17 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     } catch {}
   }
 
+  // เก็บ snapshot ลง localStorage เฉพาะชุดที่ไม่ใหญ่มาก — ชุดใหญ่ข้ามไป (การ JSON.stringify
+  // ก้อนหลายพัน object ทุกครั้งที่โหลดคือหนึ่งในต้นเหตุที่หน่วง; ชุดใหญ่โหลดจาก Supabase เอาแทน)
+  const PERSIST_MAX_ROWS = 1200
   function persistType(type) {
     try {
-      const json = JSON.stringify(getRowsByType(type))
-      // กัน localStorage เต็ม (ราว 5MB/UTF-16) — ข้อมูลใหญ่เกินก็ข้าม (จะดึงใหม่ตอนต้องใช้)
-      if (json.length > 2_000_000) localStorage.removeItem(CACHE_PREFIX + type)
-      else localStorage.setItem(CACHE_PREFIX + type, json)
+      const rows = getRowsByType(type)
+      if (rows.length > PERSIST_MAX_ROWS) {
+        localStorage.removeItem(CACHE_PREFIX + type)
+      } else {
+        localStorage.setItem(CACHE_PREFIX + type, JSON.stringify(rows))
+      }
     } catch { try { localStorage.removeItem(CACHE_PREFIX + type) } catch {} }
     persistMeta()
   }
@@ -453,246 +503,230 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   function hydrateCache() {
     try {
       const metaRaw = localStorage.getItem(CACHE_PREFIX + 'meta')
-      if (!metaRaw) return
-      const meta = JSON.parse(metaRaw)
-      if (!meta?.savedAt || Date.now() - meta.savedAt > CACHE_TTL_MS) {
-        // หมดอายุ → ล้างทิ้งทั้งหมด
-        localStorage.removeItem(CACHE_PREFIX + 'meta')
-        CACHE_TYPES.forEach((t) => localStorage.removeItem(CACHE_PREFIX + t))
-        return
+      if (metaRaw) {
+        const meta = JSON.parse(metaRaw)
+        if (meta?.typeLastFetchedAt) typeLastFetchedAt.value = meta.typeLastFetchedAt
+        if (meta?.typeLastRange) typeLastRange.value = meta.typeLastRange
+        if (meta?.lastFetched) lastFetched.value = new Date(meta.lastFetched)
       }
       for (const t of CACHE_TYPES) {
         const raw = localStorage.getItem(CACHE_PREFIX + t)
         if (!raw) continue
         const rows = JSON.parse(raw)
         if (!Array.isArray(rows) || !rows.length) continue
-        if (t === 'pr') prRows.value = rows
-        else if (t === 'po') poRows.value = rows
-        else if (t === 'ap') apRows.value = rows
-        else if (t === 'pv') pvRows.value = rows
-        else if (t === 'expense') expenseRows.value = rows
+        setRowsByType(t, rows)
       }
-      if (meta.typeLastFetchedAt) typeLastFetchedAt.value = meta.typeLastFetchedAt
-      if (meta.typeLastRange) typeLastRange.value = meta.typeLastRange
-      if (meta.lastFetched) lastFetched.value = new Date(meta.lastFetched)
     } catch {}
   }
   hydrateCache()
 
-  const shouldUseTypeCache = (type, force = false) => {
-    if (force) return false
-    const rows = getRowsByType(type)
-    if (!rows.length) return false
-
-    const sameRange = typeLastRange.value[type] === getCurrentRangeKey()
-    if (!sameRange) return false
-
-    const lastAt = typeLastFetchedAt.value[type]
-    if (!lastAt) return false
-
-    const freshMs = Date.now() - new Date(lastAt).getTime()
-    return freshMs < CACHE_TTL_MS
+  // ── in-memory freshness: ถ้าเพิ่งโหลด range เดิมไม่นาน ไม่ต้อง query Supabase ซ้ำ ──
+  // (สลับหน้าไป-มาในช่วง TTL นี้ = อ่านจากหน่วยความจำ ไม่ยิง network เลย → ลื่นขึ้นมาก)
+  const MEM_TTL_MS = 2 * 60 * 1000
+  function isTypeFresh(type, from, to) {
+    if (!getRowsByType(type).length) return false
+    if (typeLastRange.value[type] !== `${from || ''}_${to || ''}`) return false
+    const last = typeLastFetchedAt.value[type]
+    return !!last && Date.now() - new Date(last).getTime() < MEM_TTL_MS
   }
 
-  async function fetchTrcloudData(type = 'pr', options = {}) {
-    const { force = false, skipApStatusSync = false } = options
-    if (shouldUseTypeCache(type, force)) return
-    if (activeRequests.has(type)) return activeRequests.get(type)
+  // ── อ่านจาก Supabase → ใส่ ref (ตามช่วงวันที่ที่หน้าจอเลือก) ─────────────────
+  async function loadType(type, from = dateFrom.value, to = dateTo.value, opts = {}) {
+    const { force = false } = opts
+    if (!force && isTypeFresh(type, from, to)) return // สดอยู่แล้ว ข้าม query
+    try {
+      const rows = await loadDocs(type, from, to)
+      setRowsByType(type, rows)
+      typeLastFetchedAt.value[type] = new Date()
+      typeLastRange.value[type] = `${from || ''}_${to || ''}`
+      persistType(type)
+    } catch (err) {
+      console.error(`โหลด ${type} จาก Supabase ล้มเหลว:`, err)
+    }
+  }
 
-    const isIndependentFetch = !loading.value
-    if (isIndependentFetch) loading.value = true
-    console.log(`Starting fetch for ${type}...`)
-    const requestPromise = (async () => {
-      try {
-      const companyId = (import.meta.env.VITE_TRCLOUD_COMPANY_ID || '25').trim()
-      const passkey = (import.meta.env.VITE_TRCLOUD_PASSKEY || '6a05946b357765415b4c931d2122a8c8').trim()
-      
-      if (!companyId || !passkey) {
-        console.error('TRCLOUD API Credentials missing!')
-        return
+  async function loadAll(from = dateFrom.value, to = dateTo.value, opts = {}) {
+    await Promise.all(ALL_TYPES.map((t) => loadType(t, from, to, opts)))
+  }
+
+  // ── ดึงจาก TRCloud (proxy) ช่วง [from,to] → คืน rows (normalize แล้ว) ────────
+  async function pullTypeFromProxy(type, from, to) {
+    const companyId = (import.meta.env.VITE_TRCLOUD_COMPANY_ID || '25').trim()
+    const passkey = (import.meta.env.VITE_TRCLOUD_PASSKEY || '6a05946b357765415b4c931d2122a8c8').trim()
+    if (!companyId || !passkey) {
+      console.error('TRCLOUD API Credentials missing!')
+      return []
+    }
+
+    let endpoint = ''
+    let docType = 'project'
+    let useJson = false
+    let candidateEndpoints = []
+
+    if (type === 'pv') {
+      endpoint = '/application/finance/api/engine-payment/payment_search_keyword.php'
+      docType = ''
+      useJson = true
+      candidateEndpoints = [
+        '/application/finance/api/engine-payment/payment_search_keyword.php',
+        '/application/finance/api/engine-payment/payment_list.php'
+      ]
+    } else if (type === 'pr') {
+      endpoint = '/application/expense/api/engine-pr/pr_search_keyword.php'
+      candidateEndpoints = [endpoint]
+    } else if (type === 'po') {
+      endpoint = '/application/expense/api/engine-po/po_search_keyword.php'
+      candidateEndpoints = [
+        '/application/expense_report/api/engine-po/po_list.php',
+        '/application/expense/api/engine-po/po_search_keyword.php'
+      ]
+      useJson = true
+    } else if (type === 'ap') {
+      endpoint = '/application/expense_report/api/engine-report/invoice_list.php'
+      docType = ''
+      useJson = true
+      candidateEndpoints = [
+        '/application/expense_report/api/engine-report/invoice_list.php',
+        '/application/expense_report/api/engine-report/invoice_by_supplier.php'
+      ]
+    } else if (type === 'expense') {
+      endpoint = '/application/expense/api/engine-expense/expense_search_keyword.php'
+      docType = ''
+      candidateEndpoints = [endpoint]
+    }
+
+    let results = []
+    const seen = new Set()
+    let selectedEndpoint = endpoint
+
+    for (const nextEndpoint of candidateEndpoints) {
+      selectedEndpoint = nextEndpoint
+      let page = 0
+      let pageResults = []
+      let endpointTotal = null
+
+      let currentUseJson = useJson
+      if (selectedEndpoint.includes('expense_search_keyword.php')) {
+        currentUseJson = false
+      } else if (selectedEndpoint.includes('_search_keyword.php')) {
+        currentUseJson = (type === 'pv')
+      } else if (selectedEndpoint.includes('invoice_list.php') || selectedEndpoint.includes('po_list.php') || selectedEndpoint.includes('payment_list.php')) {
+        currentUseJson = true
       }
 
-      // Keep logs safe but useful for diagnosing stale/invalid env values.
-      console.log(`Fetch ${type} using Company ID: ${companyId}, passkey length: ${passkey.length}`)
-      
-      let endpoint = ''
-      let docType = 'project'
-      let useJson = false
-      let isApFallback = false
-      let candidateEndpoints = []
-      
-      if (type === 'pv') {
-        endpoint = '/application/finance/api/engine-payment/payment_search_keyword.php'
-        docType = ''
-        useJson = true
-        candidateEndpoints = [
-          '/application/finance/api/engine-payment/payment_search_keyword.php',
-          '/application/finance/api/engine-payment/payment_list.php'
-        ]
-      } else if (type === 'pr') {
-        endpoint = '/application/expense/api/engine-pr/pr_search_keyword.php'
-        candidateEndpoints = [endpoint]
-      } else if (type === 'po') {
-        endpoint = '/application/expense/api/engine-po/po_search_keyword.php'
-        // Prefer the report-style PO list (contains item detail) as first candidate
-        candidateEndpoints = [
-          '/application/expense_report/api/engine-po/po_list.php',
-          '/application/expense/api/engine-po/po_search_keyword.php'
-        ]
-        useJson = true
-      } else if (type === 'ap') {
-        endpoint = '/application/expense_report/api/engine-report/invoice_list.php'
-        docType = ''
-        useJson = true
-        isApFallback = true
-        candidateEndpoints = [
-          '/application/expense_report/api/engine-report/invoice_list.php',
-          '/application/expense_report/api/engine-report/invoice_by_supplier.php'
-        ]
-      } else if (type === 'expense') {
-        endpoint = '/application/expense/api/engine-expense/expense_search_keyword.php'
-        docType = ''
-        candidateEndpoints = [endpoint]
-      }
-
-      let results = []
-      let seen = new Set()
-      let total = null
-      let selectedEndpoint = endpoint
-
-      for (const nextEndpoint of candidateEndpoints) {
-        selectedEndpoint = nextEndpoint
-        let page = 0
-        let pageResults = []
-        let endpointTotal = null
-
-        // Determine if this specific endpoint needs JSON payload
-        let currentUseJson = useJson
-        if (selectedEndpoint.includes('expense_search_keyword.php')) {
-          currentUseJson = false // Expense list uses direct form-data
-        } else if (selectedEndpoint.includes('_search_keyword.php')) {
-          // PV uses JSON even for _search_keyword.php
-          if (type === 'pv') {
-            currentUseJson = true
-          } else {
-            currentUseJson = false
-          }
-        } else if (selectedEndpoint.includes('invoice_list.php') || selectedEndpoint.includes('po_list.php') || selectedEndpoint.includes('payment_list.php')) {
-          currentUseJson = true
+      while (true) {
+        let finalPayload = {
+          company_id: companyId,
+          passkey: passkey,
+          start: page,
+          keyword: '',
+          filter: '',
+          from: from,
+          to: to,
+          date_from: from,
+          date_to: to,
+          activate_date: 'on',
+          department: '',
+          sort: '',
+          advance_search: '1',
+          project: '',
+          staff: '',
+          source: '',
+          title: '',
+          name: '',
+          organization: '',
+          tax_id: '',
+          doc_from: '',
+          doc_to: '',
+          total_from: '',
+          total_to: '',
+          gtotal_from: '',
+          gtotal_to: '',
+          vat: 'all',
+          type: docType
         }
 
-        while (true) {
-          let finalPayload = {
+        if (type === 'expense') {
+          finalPayload = {
+            ...finalPayload,
+            from: from,
+            to: to,
+            date_from: from,
+            date_to: to,
+            type: 'exp',
+            advance_search: 1
+          }
+        }
+
+        if (type === 'ap' && String(selectedEndpoint || '').toLowerCase().includes('invoice_list.php')) {
+          finalPayload = {
             company_id: companyId,
             passkey: passkey,
-            start: page,
+            from: from,
+            to: to,
+            date_type: 'issue_date',
+            status_paid: 'paid',
+            status_debtor: 'debtor',
+            status_overdue: 'overdue',
+            credit_note: '',
+            staff_from: '*',
+            staff_to: '*',
+            project: '*',
+            department: '*',
             keyword: '',
+            start: page
+          }
+        }
+
+        if (type === 'po' && String(selectedEndpoint || '').toLowerCase().includes('po_list.php')) {
+          finalPayload = {
+            company_id: companyId,
+            passkey: passkey,
+            from: from,
+            to: to,
+            status_new: 1,
+            status_partial: 1,
+            status_success: 1,
+            status_confirm: 1,
+            status_rejected: 0,
+            status_force: 1,
+            status_sent: 0,
+            status_email: 0,
+            date_type: 'issue_date',
+            remain_status: '',
+            sales_from: '*',
+            sales_to: '*',
+            project: '*',
+            department: '*',
+            keyword: '',
+            start: page
+          }
+        }
+
+        if (type === 'pv' && (String(selectedEndpoint || '').toLowerCase().includes('payment_list.php') || String(selectedEndpoint || '').toLowerCase().includes('payment_search_keyword.php'))) {
+          finalPayload = {
+            company_id: companyId,
+            passkey: passkey,
+            from: from,
+            to: to,
+            date_type: 'issue_date',
+            keyword: '',
+            start: page,
             filter: '',
-            from: dateFrom.value,
-            to: dateTo.value,
-            date_from: dateFrom.value,
-            date_to: dateTo.value,
             activate_date: 'on',
             department: '',
-            sort: '',
-            advance_search: '1',
-            project: '',
-            staff: '',
-            source: '',
-            title: '',
-            name: '',
-            organization: '',
-            tax_id: '',
-            doc_from: '',
-            doc_to: '',
-            total_from: '',
-            total_to: '',
-            gtotal_from: '',
-            gtotal_to: '',
-            vat: 'all',
-            type: docType
+            sort: ''
           }
+        }
 
-          if (type === 'expense') {
-            // Match the 27 fields from Python example for XExpense
-            finalPayload = {
-              ...finalPayload,
-              from: dateFrom.value,
-              to: dateTo.value,
-              date_from: dateFrom.value,
-              date_to: dateTo.value,
-              type: 'exp', // Important for XExpense
-              advance_search: 1
-            }
-          }
+        const body = currentUseJson
+          ? new URLSearchParams({ json: JSON.stringify(finalPayload) })
+          : new URLSearchParams(finalPayload)
 
-          if (type === 'ap' && String(selectedEndpoint || '').toLowerCase().includes('invoice_list.php')) {
-            finalPayload = {
-              company_id: companyId,
-              passkey: passkey,
-              from: dateFrom.value,
-              to: dateTo.value,
-              date_type: 'issue_date',
-              status_paid: 'paid',
-              status_debtor: 'debtor',
-              status_overdue: 'overdue',
-              credit_note: '',
-              staff_from: '*',
-              staff_to: '*',
-              project: '*',
-              department: '*',
-              keyword: '',
-              start: page
-            }
-          }
-
-          if (type === 'po' && String(selectedEndpoint || '').toLowerCase().includes('po_list.php')) {
-            finalPayload = {
-              company_id: companyId,
-              passkey: passkey,
-              from: dateFrom.value,
-              to: dateTo.value,
-              status_new: 1,
-              status_partial: 1,
-              status_success: 1,
-              status_confirm: 1,
-              status_rejected: 0,
-              status_force: 1,
-              status_sent: 0,
-              status_email: 0,
-              date_type: 'issue_date',
-              remain_status: '',
-              sales_from: '*',
-              sales_to: '*',
-              project: '*',
-              department: '*',
-              keyword: '',
-              start: page
-            }
-          }
-
-          if (type === 'pv' && (String(selectedEndpoint || '').toLowerCase().includes('payment_list.php') || String(selectedEndpoint || '').toLowerCase().includes('payment_search_keyword.php'))) {
-            finalPayload = {
-              company_id: companyId,
-              passkey: passkey,
-              from: dateFrom.value,
-              to: dateTo.value,
-              date_type: 'issue_date',
-              keyword: '',
-              start: page,
-              filter: '',
-              activate_date: 'on',
-              department: '',
-              sort: ''
-            }
-          }
-
-          const body = currentUseJson
-            ? new URLSearchParams({ json: JSON.stringify(finalPayload) })
-            : new URLSearchParams(finalPayload)
-
-          const url = trcloudProxyUrl(selectedEndpoint)
-          const response = await fetch(url, {
+        const url = trcloudProxyUrl(selectedEndpoint)
+        let response
+        try {
+          response = await fetch(url, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -701,212 +735,246 @@ export const useTrcloudStore = defineStore('trcloud', () => {
             },
             body: body,
           })
-
-          if (!response.ok) {
-            console.error(`HTTP error for ${type}: status ${response.status}`)
-            break
-          }
-          const res = await response.json()
-          if (type === 'pv') {
-            console.log(`Response for PV (page ${page}):`, res)
-          }
-          
-          const isSuccess = res.success == 1 || res.success === true || Array.isArray(res.result) || Array.isArray(res.data)
-          if (!isSuccess) {
-            if (res.message === 'No data is received!') {
-              console.log(`${type}: End of data reached or no data in range.`)
-              break
-            }
-            if (pageResults.length > 0) {
-              console.warn(`⚠️ Partial fetch for ${type} due to API response:`, res.message)
-              break
-            }
-            console.error(`❌ API Error for ${type}:`, res.message || 'Unknown Error', res)
-            break
-          }
-
-          if (endpointTotal === null) endpointTotal = parseInt(res.count || res.total || 0)
-
-          let items = res.result || res.data || []
-          if (!Array.isArray(items)) {
-            if (typeof items === 'object' && items !== null) {
-              items = [items]
-            } else {
-              items = []
-            }
-          }
-          
-          if (items.length === 0) break
-          
-          const newItems = []
-          for (const it of items) {
-            if (type === 'pv') {
-              if (!it.issue_date && it.payment_date) it.issue_date = it.payment_date
-              if (!it.issue_date && it.date) it.issue_date = it.date
-              if (!it.grand_total && it.amount) it.grand_total = it.amount
-              if (!it.grand_total && it.total_amount) it.grand_total = it.total_amount
-              if (!it.grand_total && it.total) it.grand_total = it.total
-              
-              // Set payment for PV (full amount)
-              it.payment = it.grand_total || it.total || it.amount || it.total_amount || 0
-
-              let rawStatus = (it.status || it.payment_status || it.status_payment || '').toString().toLowerCase()
-              let status = it.status || 'ชำระแล้ว'
-              if (rawStatus.includes('ชำระแล้ว') || rawStatus.includes('paid') || rawStatus.includes('success') || rawStatus.includes('complete') || rawStatus.includes('อนุมัติ')) {
-                status = 'ชำระแล้ว'
-              } else if (rawStatus.includes('ยังไม่') || rawStatus.includes('unpaid') || rawStatus.includes('pending')) {
-                status = 'ยังไม่ชำระ'
-              } else if (rawStatus.includes('ยกเลิก') || rawStatus.includes('cancel')) {
-                status = 'ยกเลิก'
-              }
-              it.status = status
-              if (!it.payment_status) it.payment_status = status
-              
-              // Map currency
-              it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
-            }
-
-            let pid
-            if (type === 'ap') {
-              pid = it.item_id || it.ap_item_id || (`${it.expense_id || it.invoice_number || ''}_${it.product_id || it.item_id || ''}_${(it.description || it.item_name || it.product || '')}`)
-            } else if (type === 'po') {
-              pid = it.item_id || it.po_item_id || (`${it.po_id || it.id || it.document_number || ''}_${it.product_id || it.item_id || ''}_${(it.description || it.item_name || it.product || '')}`)
-            } else {
-              pid = it.po_id || it.pr_id || it.expense_id || it.payment_id || it.id || it.invoice_number || it.document_number
-            }
-
-            if (pid) {
-              if (!seen.has(pid)) {
-                seen.add(pid)
-                it.unique_id = String(pid) // เก็บ unique_id ไว้ในตัวข้อมูลเลย
-                
-                // Map currency for all types
-                if (!it.currency) {
-                  it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
-                }
-                
-                newItems.push(it)
-              }
-            } else {
-              // If no identifier available, include the row to avoid losing data
-              const fallbackId = `fallback_${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-              it.unique_id = fallbackId
-              
-              // Map currency for fallback case
-              it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
-              
-              newItems.push(it)
-            }
-          }
-
-          if (newItems.length > 0) {
-            pageResults.push(...newItems)
-            if (type === 'pr') prRows.value = [...pageResults]
-            else if (type === 'po') poRows.value = [...pageResults]
-            else if (type === 'pv') pvRows.value = [...pageResults]
-            else if (type === 'expense') expenseRows.value = [...pageResults]
-            else if (type === 'ap') {
-              const apList = pageResults.map(x => {
-                let rawStatus = (x.payment_status || x.status || x.status_payment || '').toString().toLowerCase()
-                let status = 'ยังไม่ชำระ'
-                const remain = parseFloat(x.remain || x.balance || -1)
-                const total = parseFloat(x.grand_total || x.total || 0)
-                if (remain === 0 || rawStatus.includes('paid') || rawStatus.includes('ชำระแล้ว') || rawStatus.includes('success') || rawStatus.includes('complete') || rawStatus.includes('อนุมัติ')) {
-                  status = 'ชำระแล้ว'
-                } else if (remain > 0 && remain < total) {
-                  status = 'ยังไม่ชำระ'
-                }
-                const mappedCurrency = String(x.fx || x.currency || x.currency_name || x.currency_code || x.fx_code || 'LAK').toUpperCase()
-                return { ...x, payment_status: status, currency: mappedCurrency }
-              })
-              apRows.value = apList
-            }
-          }
-
-          if (endpointTotal && pageResults.length >= endpointTotal) break
-          page++
-          await new Promise(resolve => setTimeout(resolve, 10))
-          if (page > 50) break
-        }
-
-        if (pageResults.length > 0) {
-          results = pageResults
-          total = endpointTotal
-          if (isApFallback && selectedEndpoint.includes('invoice_by_supplier.php')) {
-            console.log(`TRCloud AP fallback used endpoint: ${selectedEndpoint}`)
-          }
+        } catch (err) {
+          console.error(`Network error for ${type}:`, err)
           break
         }
-      }
 
-      typeLastFetchedAt.value[type] = new Date()
-      typeLastRange.value[type] = getCurrentRangeKey()
-      persistType(type) // เก็บลง localStorage เพื่อให้ reload ครั้งหน้าไม่ต้องยิง proxy ซ้ำ
-
-      // After all pages are fetched, do the background AP status check
-      if (type === 'ap' && !skipApStatusSync && apRows.value.length > 0) {
-        const needsUpdate = apRows.value.filter(ap => ap.payment_status === 'ยังไม่ชำระ')
-        if (needsUpdate.length > 0) {
-          // We limit background check to the most recent 30 items to save resources
-          const recentNeedsUpdate = needsUpdate.slice(0, 30)
-          const updateStatuses = async () => {
-            const fetchStatus = async (ap) => {
-              const eid = ap.expense_id || ap.id
-              if (!eid) return
-              try {
-                const inner = { company_id: companyId, passkey: passkey, activate_date: 'on', expense_id: eid }
-                const r = await fetch(trcloudProxyUrl('/application/expense/api/engine-expense/invoice-payment.php'), {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    ...trcloudProxyExtraHeaders(),
-                  },
-                  body: new URLSearchParams({ json: JSON.stringify(inner) })
-                })
-                const payRes = await r.json()
-                const pays = payRes.success === 1 ? payRes.result || [] : []
-                if (pays.length > 0) {
-                  ap.payment_status = 'ชำระแล้ว'
-                }
-              } catch (e) {}
-            }
-            // Fetch in chunks of 10
-            for (let i = 0; i < recentNeedsUpdate.length; i += 10) {
-              const chunk = recentNeedsUpdate.slice(i, i + 10)
-              await Promise.all(chunk.map(ap => fetchStatus(ap)))
-              apRows.value = [...apRows.value] // Update UI
-              await new Promise(resolve => setTimeout(resolve, 100)) // Small delay
-            }
-          }
-          updateStatuses()
+        if (!response.ok) {
+          console.error(`HTTP error for ${type}: status ${response.status}`)
+          break
         }
-      }
-      } catch (err) {
-        console.error(`TRCLOUD Fetch Error (${type}):`, err)
-      } finally {
-        activeRequests.delete(type)
-        if (isIndependentFetch) loading.value = false
-      }
-    })()
+        const res = await response.json()
 
-    activeRequests.set(type, requestPromise)
-    return requestPromise
+        const isSuccess = res.success == 1 || res.success === true || Array.isArray(res.result) || Array.isArray(res.data)
+        if (!isSuccess) {
+          if (res.message === 'No data is received!') break
+          if (pageResults.length > 0) {
+            console.warn(`⚠️ Partial fetch for ${type}:`, res.message)
+            break
+          }
+          console.error(`❌ API Error for ${type}:`, res.message || 'Unknown Error')
+          break
+        }
+
+        if (endpointTotal === null) endpointTotal = parseInt(res.count || res.total || 0)
+
+        let items = res.result || res.data || []
+        if (!Array.isArray(items)) {
+          items = (typeof items === 'object' && items !== null) ? [items] : []
+        }
+        if (items.length === 0) break
+
+        for (const it of items) {
+          if (type === 'pv') {
+            if (!it.issue_date && it.payment_date) it.issue_date = it.payment_date
+            if (!it.issue_date && it.date) it.issue_date = it.date
+            if (!it.grand_total && it.amount) it.grand_total = it.amount
+            if (!it.grand_total && it.total_amount) it.grand_total = it.total_amount
+            if (!it.grand_total && it.total) it.grand_total = it.total
+            it.payment = it.grand_total || it.total || it.amount || it.total_amount || 0
+
+            let rawStatus = (it.status || it.payment_status || it.status_payment || '').toString().toLowerCase()
+            let status = it.status || 'ชำระแล้ว'
+            if (rawStatus.includes('ชำระแล้ว') || rawStatus.includes('paid') || rawStatus.includes('success') || rawStatus.includes('complete') || rawStatus.includes('อนุมัติ')) {
+              status = 'ชำระแล้ว'
+            } else if (rawStatus.includes('ยังไม่') || rawStatus.includes('unpaid') || rawStatus.includes('pending')) {
+              status = 'ยังไม่ชำระ'
+            } else if (rawStatus.includes('ยกเลิก') || rawStatus.includes('cancel')) {
+              status = 'ยกเลิก'
+            }
+            it.status = status
+            if (!it.payment_status) it.payment_status = status
+            it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
+          }
+
+          let pid
+          if (type === 'ap') {
+            pid = it.item_id || it.ap_item_id || (`${it.expense_id || it.invoice_number || ''}_${it.product_id || it.item_id || ''}_${(it.description || it.item_name || it.product || '')}`)
+          } else if (type === 'po') {
+            pid = it.item_id || it.po_item_id || (`${it.po_id || it.id || it.document_number || ''}_${it.product_id || it.item_id || ''}_${(it.description || it.item_name || it.product || '')}`)
+          } else {
+            pid = it.po_id || it.pr_id || it.expense_id || it.payment_id || it.id || it.invoice_number || it.document_number
+          }
+
+          if (pid) {
+            if (seen.has(pid)) continue
+            seen.add(pid)
+            it.unique_id = String(pid)
+          } else {
+            // ไม่มี identifier: สร้าง key จากเนื้อหา (deterministic — จะได้ไม่เกิดแถวซ้ำตอน sync รอบถัดไป)
+            it.unique_id = `fallback_${type}_${it.issue_date || it.date || ''}_${it.grand_total || it.total || ''}_${it.invoice_number || it.document_number || ''}`
+            if (seen.has(it.unique_id)) continue
+            seen.add(it.unique_id)
+          }
+
+          if (!it.currency) {
+            it.currency = String(it.fx || it.currency || it.currency_name || it.currency_code || it.fx_code || 'LAK').toUpperCase()
+          }
+          pageResults.push(it)
+        }
+
+        if (endpointTotal && pageResults.length >= endpointTotal) break
+        page++
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        if (page > 50) break
+      }
+
+      if (pageResults.length > 0) {
+        results = pageResults
+        break
+      }
+    }
+
+    // AP: map สถานะชำระ/สกุลเงินให้พร้อมใช้ (เหมือน logic เดิม) ก่อนเก็บลง warehouse
+    if (type === 'ap') {
+      results = results.map((x) => {
+        let rawStatus = (x.payment_status || x.status || x.status_payment || '').toString().toLowerCase()
+        let status = 'ยังไม่ชำระ'
+        const remain = parseFloat(x.remain || x.balance || -1)
+        const total = parseFloat(x.grand_total || x.total || 0)
+        if (remain === 0 || rawStatus.includes('paid') || rawStatus.includes('ชำระแล้ว') || rawStatus.includes('success') || rawStatus.includes('complete') || rawStatus.includes('อนุมัติ')) {
+          status = 'ชำระแล้ว'
+        } else if (remain > 0 && remain < total) {
+          status = 'ยังไม่ชำระ'
+        }
+        const mappedCurrency = String(x.fx || x.currency || x.currency_name || x.currency_code || x.fx_code || 'LAK').toUpperCase()
+        return { ...x, payment_status: status, currency: mappedCurrency }
+      })
+    }
+
+    return results
   }
 
+  async function refreshSyncState() {
+    syncState.value = await getSyncState()
+    return syncState.value
+  }
+
+  // ── sync ชนิดเดียว: pull จาก proxy → upsert Supabase → reload ref จาก warehouse ──
+  async function syncType(type, from, to) {
+    const rows = await pullTypeFromProxy(type, from, to)
+    if (rows.length) {
+      try {
+        await upsertDocs(type, rows)
+      } catch (err) {
+        console.error(`บันทึก ${type} ลง Supabase ล้มเหลว:`, err)
+      }
+    }
+    await loadType(type, dateFrom.value, dateTo.value, { force: true }) // sync แล้วต้องรีโหลดจริง
+    return rows.length
+  }
+
+  async function syncRange(from, to, { label = '' } = {}) {
+    for (const type of ALL_TYPES) {
+      syncMessage.value = `${label}${type.toUpperCase()}…`
+      try {
+        await syncType(type, from, to)
+      } catch (err) {
+        console.error(`sync ${type} ล้มเหลว:`, err)
+      }
+    }
+  }
+
+  // backfill ทั้งปีปัจจุบัน (ครั้งแรก หรือกดเอง)
+  async function backfillThisYear() {
+    if (syncing.value) return
+    syncing.value = true
+    syncPhase.value = 'backfill'
+    const nowIso = new Date().toISOString()
+    const from = yearStartYmd()
+    const to = todayYmd()
+    try {
+      await syncRange(from, to, { label: 'ดึงทั้งปี · ' })
+      await setSyncState({
+        last_full_backfill: nowIso,
+        last_incremental_at: nowIso,
+        backfill_from: from,
+        backfill_to: to,
+      })
+      await refreshSyncState()
+    } finally {
+      syncing.value = false
+      syncPhase.value = ''
+      syncMessage.value = ''
+      lastFetched.value = new Date()
+      persistMeta()
+    }
+  }
+
+  // อัพเดทเฉพาะ ~1 เดือนล่าสุด
+  async function incrementalSync() {
+    if (syncing.value) return
+    syncing.value = true
+    syncPhase.value = 'incremental'
+    const from = incrementalFromYmd()
+    const to = todayYmd()
+    try {
+      await syncRange(from, to, { label: 'อัพเดทล่าสุด · ' })
+      await setSyncState({ last_incremental_at: new Date().toISOString() })
+      await refreshSyncState()
+    } finally {
+      syncing.value = false
+      syncPhase.value = ''
+      syncMessage.value = ''
+      lastFetched.value = new Date()
+      persistMeta()
+    }
+  }
+
+  // ดึงเร็วทุกชนิด (on-demand) — หน้าต่างสั้น QUICK_DAYS ให้ได้ข้อมูลสดไว ๆ
+  async function quickSyncAll() {
+    if (syncing.value) return
+    syncing.value = true
+    syncPhase.value = 'quick'
+    const from = quickFromYmd()
+    const to = todayYmd()
+    try {
+      await syncRange(from, to, { label: 'ดึงเร็ว · ' })
+      await setSyncState({ last_incremental_at: new Date().toISOString() })
+      await refreshSyncState()
+    } finally {
+      syncing.value = false
+      syncPhase.value = ''
+      syncMessage.value = ''
+      lastFetched.value = new Date()
+      persistMeta()
+    }
+  }
+
+  const isIncrementalStale = (state) => {
+    const last = state?.last_incremental_at
+    if (!last) return true
+    return Date.now() - new Date(last).getTime() > SYNC_MIN_INTERVAL_MS
+  }
+
+  // ── public: โหลดข้อมูลเข้าหน้าเว็บ (อ่านจาก Supabase) + sync ตามจำเป็น ────────
   async function fetchAll(options = {}) {
-    const { force = false, skipApStatusSync = false } = options
+    const { force = false } = options
     if (loading.value) return
     loading.value = true
     try {
-      // Fetch in parallel to reduce total waiting time.
-      await Promise.all([
-        fetchTrcloudData('pr', { force, skipApStatusSync }),
-        fetchTrcloudData('po', { force, skipApStatusSync }),
-        fetchTrcloudData('ap', { force, skipApStatusSync }),
-        fetchTrcloudData('pv', { force, skipApStatusSync }),
-        fetchTrcloudData('expense', { force, skipApStatusSync })
-      ])
+      await loadAll() // paint จาก Supabase (cache-aware — ข้ามชนิดที่ยังสด)
+      let state = await refreshSyncState()
+      const total = await countDocs()
+      if (total === 0) {
+        // warehouse ว่างจริง → ดึงทั้งปี (ครั้งแรกสุดเท่านั้น)
+        await backfillThisYear()
+      } else {
+        // มีข้อมูลแล้ว: ถ้า flag ยังว่าง (เช่นข้อมูลมาจากการ pull รายหน้า) → เซ็ตให้ กันทุกหน้าดึงซ้ำ
+        if (!state?.last_full_backfill) {
+          const nowIso = new Date().toISOString()
+          await setSyncState({
+            last_full_backfill: nowIso,
+            last_incremental_at: state?.last_incremental_at || nowIso,
+          })
+          state = await refreshSyncState()
+        }
+        if (force || isIncrementalStale(state)) {
+          // incrementalSync/backfill รีโหลดแต่ละชนิดให้อยู่แล้ว ไม่ต้อง loadAll ซ้ำ
+          await incrementalSync()
+        }
+      }
       lastFetched.value = new Date()
       persistMeta()
     } finally {
@@ -914,14 +982,53 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     }
   }
 
+  // โหลด/อัพเดทเฉพาะชนิดเดียว (apView/poView/expView/... เรียก)
+  async function fetchTrcloudData(type = 'pr', options = {}) {
+    if (activeRequests.has(type)) return activeRequests.get(type)
+    const { force = false } = options
+    // ทางลัด: ไม่ force + ข้อมูลในหน่วยความจำยังสด → ไม่ต้องแตะ Supabase เลย (สลับหน้าลื่น)
+    if (!force && isTypeFresh(type, dateFrom.value, dateTo.value)) return
+
+    const wasLoading = loading.value
+    if (!wasLoading) loading.value = true
+
+    const requestPromise = (async () => {
+      try {
+        // มี rows ในหน่วยความจำแล้ว = ถือว่ามีข้อมูล (ไม่ต้อง query count); ว่างค่อยเช็ค warehouse
+        const hasData = getRowsByType(type).length > 0 || (await countDocs(type)) > 0
+        if (!hasData) {
+          // warehouse ยังไม่มีชนิดนี้ → ดึงทั้งปีลง Supabase (ครั้งเดียว)
+          await syncType(type, yearStartYmd(), todayYmd())
+        } else if (force) {
+          // กดเอง = ดึงเร็วจาก TRCloud (หน้าต่างสั้น QUICK_DAYS) แล้ว upsert + reload
+          await syncType(type, quickFromYmd(), todayYmd())
+        } else {
+          // ปกติ (ตอน mount) = อ่านจาก Supabase อย่างเดียว ไม่ยิง TRCloud
+          await loadType(type)
+        }
+      } catch (err) {
+        console.error(`fetchTrcloudData(${type}) ล้มเหลว:`, err)
+      } finally {
+        activeRequests.delete(type)
+        if (!wasLoading) loading.value = false
+      }
+    })()
+
+    activeRequests.set(type, requestPromise)
+    return requestPromise
+  }
+
   return {
     prRows, poRows, apRows, pvRows, expenseRows,
-    apItemRows, poItemRows, expenseItemRows,
+    apItemRows, poItemRows, prItemRows, expenseItemRows,
     loading, lastFetched, isLoaded,
     dateFrom, dateTo,
     appoFormState, appoRowsState, appoApSearchTextState,
     expFormState, expRowsState, expApSearchTextState,
     pendingAutofill,
-    fetchAll, fetchTrcloudData
+    fetchAll, fetchTrcloudData,
+    // ── warehouse / sync ──
+    syncing, syncPhase, syncMessage, syncState,
+    backfillThisYear, incrementalSync, quickSyncAll, loadAll, loadType, refreshSyncState,
   }
 })

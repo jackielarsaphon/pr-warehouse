@@ -3,6 +3,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { supabase } from '@/lib/supabase'
+import { downloadElementAsPdf } from '@/lib/exportPdf'
 
 const ui = useUiStore()
 
@@ -70,6 +71,7 @@ const saving = ref(false)
 const showSuccessModal = ref(false)
 const generatedRequestId = ref(null)
 const isBillView = ref(false)
+const isGeneratingPdf = ref(false)
 
 // ─── Items from cart (editable) ─────────────────────────────────────────────
 const formItems = ref([])
@@ -194,8 +196,22 @@ async function generateBill() {
   }
 }
 
-function exportToPdf() {
-  window.print()
+async function exportToPdf() {
+  const el = document.getElementById('print-area-detail')
+  if (!el) {
+    ui.showToast('ไม่พบเนื้อหาเอกสาร', 'warning')
+    return
+  }
+  isGeneratingPdf.value = true
+  try {
+    await nextTick()
+    await downloadElementAsPdf(el, `withdraw-${generatedRequestId.value || 'document'}.pdf`)
+    ui.showToast('ดาวน์โหลด PDF สำเร็จ', 'success')
+  } catch (err) {
+    ui.showToast(err?.message || 'สร้าง PDF ไม่สำเร็จ', 'error')
+  } finally {
+    isGeneratingPdf.value = false
+  }
 }
 
 function finishAndBack() {
@@ -227,7 +243,7 @@ function finishAndBack() {
 
     <!-- ── Paper Form ── -->
     <div class="paper-scroll-wrap scrollbar-overlay-x">
-      <div class="paper-sheet bg-white dark:bg-white text-gray-900 shadow-xl rounded-lg overflow-hidden font-['Niramit',sans-serif] text-[9px]" style="color: #111;">
+      <div id="print-area-detail" class="paper-sheet bg-white dark:bg-white text-gray-900 shadow-xl rounded-lg overflow-hidden font-['Niramit',sans-serif] text-[9px]" style="color: #111;">
 
         <div class="p-6 pb-1 pt-2.7">
 
@@ -615,9 +631,9 @@ function finishAndBack() {
 
     <!-- ── Bill Action Bar (Only show in Bill View) ── -->
     <div v-if="isBillView" class="max-w-[960px] mx-auto flex justify-center gap-4 mt-6 print:hidden">
-      <button @click="exportToPdf" class="px-8 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold shadow-lg shadow-teal-500/25 transition-all">
+      <button @click="exportToPdf" :disabled="isGeneratingPdf" class="px-8 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-bold shadow-lg shadow-teal-500/25 transition-all disabled:opacity-50">
         <i class="fa-solid fa-file-pdf mr-2"></i>
-        ส่งออกเป็น PDF / พิมพ์
+        {{ isGeneratingPdf ? 'กำลังสร้าง PDF...' : 'ส่งออกเป็น PDF / พิมพ์' }}
       </button>
       <button @click="finishAndBack" class="px-8 py-3.5 rounded-2xl bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-gray-300 font-bold hover:bg-gray-300 transition-all">
         เสร็จสิ้น

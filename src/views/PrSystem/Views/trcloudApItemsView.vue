@@ -477,7 +477,7 @@ onMounted(() => {
               <td colspan="13" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
+                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
                 </div>
               </td>
             </tr>

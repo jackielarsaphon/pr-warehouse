@@ -24,6 +24,20 @@ const router = useRouter()
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
 
+// ดึงเร็วจาก TRCloud (หน้าต่างสั้น ~7 วัน) ทุกชนิด → upsert Supabase → reload
+async function handleQuickSync() {
+  if (trcloudStore.syncing) return
+  await trcloudStore.quickSyncAll()
+}
+
+// ดึงทั้งปีใหม่ทั้งหมด (backfill) — หนักกว่า จึงถามยืนยันก่อน
+async function handleBackfill() {
+  if (trcloudStore.syncing) return
+  const ok = window.confirm("ดึงข้อมูลทั้งปีใหม่จาก TRCloud ทั้งหมด? อาจใช้เวลาสักครู่")
+  if (!ok) return
+  await trcloudStore.backfillThisYear()
+}
+
 const menuOpen = ref(false)
 const profileRef = ref(null)
 const notificationsOpen = ref(false)
@@ -315,9 +329,8 @@ onMounted(() => {
   timerId = window.setInterval(() => {
     now.value = new Date()
   }, 1000)
-  if (!trcloudStore.isLoaded) {
-    trcloudStore.fetchAll()
-  }
+  // paint จาก Supabase/cache ทันที แล้ว sync incremental ถ้าเลยรอบ (fetchAll debounce ให้เอง)
+  trcloudStore.fetchAll()
   window.addEventListener("resize", onResize)
   window.addEventListener("pointerdown", onPointerDown)
   window.addEventListener("themechange", onThemeChange)
@@ -355,6 +368,43 @@ onBeforeUnmount(() => {
         class="rounded-lg px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200 whitespace-nowrap"
       >
         {{ dateTimeText }}
+      </div>
+
+      <!-- สถานะ + ปุ่มซิงก์ข้อมูล TRCloud (TRCloud → Supabase → หน้าเว็บ) -->
+      <div class="flex items-center gap-1.5">
+        <span
+          v-if="trcloudStore.syncing"
+          class="hidden sm:inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 whitespace-nowrap max-w-[170px]"
+          :title="trcloudStore.syncMessage"
+        >
+          <i class="fa-solid fa-circle-notch fa-spin"></i>
+          <span class="truncate">{{ trcloudStore.syncMessage || "กำลังซิงก์…" }}</span>
+        </span>
+
+        <button
+          type="button"
+          class="text-gray-600 hover:text-gray-900 bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:bg-gray-800 rounded-lg p-1.5 transition disabled:opacity-50"
+          @click="handleQuickSync"
+          :disabled="trcloudStore.syncing || trcloudStore.loading"
+          title="ดึงเร็วจาก TRCloud (ย้อนหลัง ~7 วัน)"
+          aria-label="ดึงเร็วจาก TRCloud"
+        >
+          <i
+            class="fa-solid fa-rotate text-[18px]"
+            :class="{ 'fa-spin': trcloudStore.syncing && (trcloudStore.syncPhase === 'quick' || trcloudStore.syncPhase === 'incremental') }"
+          ></i>
+        </button>
+
+        <button
+          type="button"
+          class="hidden sm:inline-flex text-gray-600 hover:text-gray-900 bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:bg-gray-800 rounded-lg p-1.5 transition disabled:opacity-50"
+          @click="handleBackfill"
+          :disabled="trcloudStore.syncing || trcloudStore.loading"
+          title="ดึงข้อมูลทั้งปีใหม่ทั้งหมด"
+          aria-label="ดึงข้อมูลทั้งปี"
+        >
+          <i class="fa-solid fa-cloud-arrow-down text-[18px]"></i>
+        </button>
       </div>
 
       <button
