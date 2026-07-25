@@ -277,6 +277,39 @@ function isTracked(row) {
   return id ? trackedRowIds.value.includes(id) : false
 }
 
+// กดติดตาม AP → เพิ่มเอกสารนั้นเป็น "แถว" ในหน้าสรุปขอจ่ายด่วน (urgent_payment_rows)
+// fire-and-forget + กันซ้ำด้วย doc_number — ถ้าพลาดก็ไม่กระทบการติดตาม (หน้าจ่ายด่วนรับผ่าน realtime เดิม)
+async function addToUrgentPayment(apRow) {
+  try {
+    const docNo = formatDocNo(apRow, 'AP')
+    if (!docNo || docNo === '-') return
+    const { data: existing } = await supabase
+      .from('urgent_payment_rows')
+      .select('id')
+      .eq('doc_number', docNo)
+      .limit(1)
+    if (existing && existing.length) return // มีแถวนี้อยู่แล้ว ไม่เพิ่มซ้ำ
+
+    const cur = String(apRow.currency || apRow.fx || 'LAK').toUpperCase()
+    const amt = String(apRow.grand_total || apRow.total || '')
+    const payload = {
+      id: crypto.randomUUID(),
+      doc_number: docNo,
+      vendor: apRow.organization || apRow.name || '',
+      items: apRow.invoice_note || apRow.remark || apRow.note || apRow.description || '',
+      cost_center: apRow.project || apRow.project_name || apRow.department || '',
+      air_code: '',
+      reason: 'ติดตามจากหน้า AP',
+      kip: (cur === 'LAK' || cur === 'KIP') ? amt : '',
+      thb: cur === 'THB' ? amt : '',
+      usd: cur === 'USD' ? amt : '',
+      staff: auth.user?.fullname || auth.user?.username || '',
+      status: 'ตามของ',
+    }
+    await supabase.from('urgent_payment_rows').insert(payload)
+  } catch (e) { /* เงียบไว้ ไม่ให้กระทบการติดตาม */ }
+}
+
 function toggleTracked(row, checked) {
   const currentId = getRowIdentity(row)
   if (!currentId) return
@@ -295,6 +328,7 @@ function toggleTracked(row, checked) {
     
     persistTrackedRowIds()
     setTrackedCloud(sameDocIds, true)
+    addToUrgentPayment(row) // เพิ่มเอกสารนี้เข้าไปในหน้าจ่ายด่วน
   } else {
     // Uncheck: only remove the current item
     trackedRowIds.value = trackedRowIds.value.filter((x) => x !== currentId)
