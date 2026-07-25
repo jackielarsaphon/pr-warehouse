@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # false = ต่อคิวแทนตัดกลางคัน — กันไม่ให้ run ถูกตัดตอน deploy แล้วทิ้ง Pages deployment ค้าง
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -68,3 +69,6 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # รอ Pages publish นานขึ้น (30 นาที) กัน "Timeout reached" เวลา backend ช้า/คิวยาว
+          timeout: 1800000
