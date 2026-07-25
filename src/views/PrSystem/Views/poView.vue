@@ -264,11 +264,11 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter (ใช้ค่า debounce)
+  // Search filter (ใช้ค่า debounce) — รวมเลขที่มี prefix (เช่น PO26xxxxxx) ให้ค้นเจอด้วย
   const q = debouncedFilter.value.toLowerCase().trim()
   if (q) {
     rows = rows.filter(r =>
-      JSON.stringify(r).toLowerCase().includes(q)
+      (formatDocNo(r, 'PO') + ' ' + JSON.stringify(r)).toLowerCase().includes(q)
     )
   }
 

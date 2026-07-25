@@ -82,8 +82,8 @@ const filteredTrcloudRows = computed(() => {
     })
   }
   
-  const filtered = rows.filter(r => 
-    JSON.stringify(r).toLowerCase().includes(q)
+  const filtered = rows.filter(r =>
+    (formatDocNo(r, 'PV') + ' ' + JSON.stringify(r)).toLowerCase().includes(q)
   )
 
   // Sort by Date Descending (Newest first)
