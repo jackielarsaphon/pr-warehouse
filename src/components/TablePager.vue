@@ -34,7 +34,7 @@ const rangeLabel = computed(() => {
   -->
   <div
     v-if="total > 0"
-    class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-3 border-t"
+    class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-3 pb-16 md:pb-3 border-t"
     style="border-color: var(--color-border)"
   >
     <div
