@@ -27,12 +27,20 @@ const rangeLabel = computed(() => {
 </script>
 
 <template>
+  <!--
+    วางปุ่มเปลี่ยนหน้าไว้ "กลางแถว" ไม่ชิดขอบขวา — มุมขวาล่างของจอมีตัวปรับขนาด/ซูม
+    ลอยทับอยู่ ถ้าปุ่มชิดขวาจะถูกบัง กริด 3 ช่อง (1fr auto 1fr) ทำให้ช่องกลาง
+    อยู่กลางคอนเทนเนอร์จริง ไม่ขยับตามความยาวข้อความฝั่งซ้าย
+  -->
   <div
     v-if="total > 0"
-    class="flex flex-col md:flex-row md:items-center justify-between gap-3 px-4 py-3 border-t"
+    class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-3 border-t"
     style="border-color: var(--color-border)"
   >
-    <div class="flex items-center gap-2 text-[12px]" style="color: var(--color-text-muted)">
+    <div
+      class="flex items-center gap-2 text-[12px] justify-center md:justify-start"
+      style="color: var(--color-text-muted)"
+    >
       <span>แสดง {{ rangeLabel }} จาก {{ total.toLocaleString() }} รายการ</span>
       <select
         :value="pageSize"
@@ -49,7 +57,7 @@ const rangeLabel = computed(() => {
       </select>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex items-center justify-center gap-2">
       <button
         @click="emit('goTo', 1)"
         :disabled="page <= 1"
@@ -88,5 +96,8 @@ const rangeLabel = computed(() => {
         »
       </button>
     </div>
+
+    <!-- ช่องขวาปล่อยว่าง: ถ่วงให้ช่องกลางอยู่กลางจริง + กันปุ่มไปชนตัวปรับขนาดมุมขวาล่าง -->
+    <div class="hidden md:block" aria-hidden="true"></div>
   </div>
 </template>
