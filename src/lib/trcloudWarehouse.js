@@ -77,25 +77,78 @@ export async function upsertDocs(type, rows) {
 export async function loadDocs(type, from, to) {
   if (MOCK) return loadDocsMock(type, from, to)
 
-  const out = []
-  let offset = 0
-  // วน range จนกว่าจะได้แถวน้อยกว่า READ_PAGE (หมดแล้ว)
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let q = supabase.from(TABLE).select('data,issue_date').eq('doc_type', type)
+  // สร้าง query ฐาน (ใช้ซ้ำได้หลายหน้า) — select แค่ `data` เพราะผู้เรียกใช้แค่ก้อนนี้
+  const pageQuery = (offset) => {
+    let q = supabase.from(TABLE).select('data').eq('doc_type', type)
     if (from && to) {
       q = q.or(`and(issue_date.gte.${from},issue_date.lte.${to}),issue_date.is.null`)
     } else if (from) {
       q = q.or(`issue_date.gte.${from},issue_date.is.null`)
     }
-    q = q.order('issue_date', { ascending: false }).range(offset, offset + READ_PAGE - 1)
+    // ต้อง tiebreak ด้วย unique_id: ถ้าเรียงด้วย issue_date เพียงตัวเดียว แถวที่วันเดียวกัน
+    // (เช่น 2026-06-11 มี 114 ใบ) จะไม่มีลำดับที่แน่นอนระหว่าง query แต่ละหน้า
+    // → ขอบ page ที่ 1000 อาจได้แถวซ้ำหรือแถวหายไปเงียบ ๆ
+    return q
+      .order('issue_date', { ascending: false })
+      .order('unique_id', { ascending: true })
+      .range(offset, offset + READ_PAGE - 1)
+  }
 
-    const { data, error } = await q
-    if (error) throw new Error(`โหลด ${type} จาก Supabase ล้มเหลว: ${error.message}`)
-    const batch = data || []
-    for (const r of batch) if (r?.data) out.push(r.data)
-    if (batch.length < READ_PAGE) break
-    offset += READ_PAGE
+  const collect = (rows, into) => {
+    for (const r of rows || []) if (r?.data) into.push(r.data)
+  }
+
+  const out = []
+  const first = await pageQuery(0)
+  if (first.error) throw new Error(`โหลด ${type} จาก Supabase ล้มเหลว: ${first.error.message}`)
+  const firstBatch = first.data || []
+  collect(firstBatch, out)
+
+  // ได้ไม่เต็มหน้า = หมดแล้ว (เคสส่วนใหญ่: จบด้วย 1 round trip)
+  if (firstBatch.length < READ_PAGE) return out
+
+  // ยังมีต่อ → นับจำนวนจริงก่อน แล้วยิงหน้าที่เหลือ "พร้อมกันทั้งหมด"
+  // (เดิมวน while รอทีละหน้า: AP 2,551 แถว = รอ 3 รอบต่อกัน)
+  const total = await countDocs(type, from, to)
+
+  // countDocs คืน 0 เมื่อ query error — ถ้าเชื่อค่านั้นจะได้แค่ 1,000 แถวแรกแบบเงียบ ๆ
+  // เคสนี้ (นับไม่ได้ / นับได้น้อยกว่าที่อ่านมาแล้ว) ถอยไปวนทีละหน้าแบบเดิมให้ครบ
+  if (total <= firstBatch.length) {
+    let offset = READ_PAGE
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { data, error } = await pageQuery(offset)
+      if (error) throw new Error(`โหลด ${type} จาก Supabase ล้มเหลว: ${error.message}`)
+      const batch = data || []
+      collect(batch, out)
+      if (batch.length < READ_PAGE) break
+      offset += READ_PAGE
+    }
+    return out
+  }
+
+  const offsets = []
+  for (let offset = READ_PAGE; offset < total; offset += READ_PAGE) offsets.push(offset)
+  const pages = await Promise.all(offsets.map((offset) => pageQuery(offset)))
+  for (const page of pages) {
+    if (page.error) throw new Error(`โหลด ${type} จาก Supabase ล้มเหลว: ${page.error.message}`)
+    collect(page.data, out)
+  }
+
+  // เผื่อมีการเขียนข้อมูลเข้ามาระหว่างนับกับอ่าน (sync เบื้องหลังทำงานพร้อมกันได้)
+  // → ถ้าหน้าสุดท้ายยังเต็ม แปลว่ายังมีต่อ อ่านต่อให้ครบ
+  const lastBatchFull = pages.length && (pages[pages.length - 1].data || []).length === READ_PAGE
+  if (lastBatchFull) {
+    let offset = offsets[offsets.length - 1] + READ_PAGE
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { data, error } = await pageQuery(offset)
+      if (error) break // อ่านต่อไม่ได้ก็คืนเท่าที่ได้ (ดีกว่าโยน error ทิ้งของที่อ่านมาแล้ว)
+      const batch = data || []
+      collect(batch, out)
+      if (batch.length < READ_PAGE) break
+      offset += READ_PAGE
+    }
   }
   return out
 }
@@ -118,10 +171,18 @@ async function loadDocsMock(type, from, to) {
   return out
 }
 
-/** นับจำนวนเอกสาร (ทั้งหมด หรือเฉพาะชนิด) */
-export async function countDocs(type) {
+/**
+ * นับจำนวนเอกสาร (ทั้งหมด / เฉพาะชนิด / เฉพาะชนิด+ช่วงวันที่)
+ * ใส่ from,to ให้ตรงกับ loadDocs เสมอ ไม่งั้นจำนวนหน้าที่คำนวณจะเกินของจริง
+ */
+export async function countDocs(type, from, to) {
   let q = supabase.from(TABLE).select('unique_id', { count: 'exact', head: true })
   if (type) q = q.eq('doc_type', type)
+  if (from && to) {
+    q = q.or(`and(issue_date.gte.${from},issue_date.lte.${to}),issue_date.is.null`)
+  } else if (from) {
+    q = q.or(`issue_date.gte.${from},issue_date.is.null`)
+  }
   const { count, error } = await q
   if (error) return 0
   return count || 0

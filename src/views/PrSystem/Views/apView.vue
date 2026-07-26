@@ -5,6 +5,9 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { formatDocNo } from '@/utils/docNumber'
 import { useDebounced } from '@/composables/useDebounced'
+import { usePagination } from '@/composables/usePagination'
+import { rowSearchBlob } from '@/utils/searchBlob'
+import TablePager from '@/components/TablePager.vue'
 import Swal from 'sweetalert2'
 
 // toast แจ้งเตือนมุมขวาบน (ไม่บล็อกการทำงาน)
@@ -200,9 +203,7 @@ const filteredTrcloudRows = computed(() => {
   // Search filter (ใช้ค่า debounce) — รวมเลขที่มี prefix (เช่น AP26060073) ให้ค้นเจอด้วย
   const q = debouncedFilter.value.toLowerCase().trim()
   if (q) {
-    rows = rows.filter(r =>
-      (formatDocNo(r, 'AP') + ' ' + JSON.stringify(r)).toLowerCase().includes(q)
-    )
+    rows = rows.filter(r => rowSearchBlob(r, formatDocNo(r, 'AP')).includes(q))
   }
 
   // Sort by Tracking status first, then by Date Descending
@@ -232,6 +233,9 @@ const filteredTrcloudRows = computed(() => {
     return dateB.localeCompare(dateA)
   })
 })
+
+// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 2,500 แถวรวดเดียว
+const pager = usePagination(filteredTrcloudRows, { storageKey: 'ap' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -497,7 +501,7 @@ function getDisplayBadgeInfo(row) {
             <tr v-else-if="!filteredTrcloudRows.length">
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล AP จาก TRCLOUD</td>
             </tr>
-            <tr v-for="r in filteredTrcloudRows" :key="getRowIdentity(r)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="r in pager.pagedRows" :key="getRowIdentity(r)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-medium font-mono break-all" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'AP') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
@@ -523,6 +527,19 @@ function getDisplayBadgeInfo(row) {
           </tbody>
         </table>
       </div>
+
+      <TablePager
+        :page="pager.page"
+        :page-size="pager.pageSize"
+        :total="pager.total"
+        :total-pages="pager.totalPages"
+        :start-index="pager.startIndex"
+        :shown="pager.pagedRows.length"
+        @prev="pager.prev()"
+        @next="pager.next()"
+        @go-to="pager.goTo($event)"
+        @update:page-size="pager.setPageSize($event)"
+      />
     </div>
   </div>
 </template>

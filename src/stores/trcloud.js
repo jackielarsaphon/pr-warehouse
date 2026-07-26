@@ -269,6 +269,22 @@ export const useTrcloudStore = defineStore('trcloud', () => {
 
   const extractExpenseItemRows = (expenseData, poItems = []) => {
     if (!Array.isArray(expenseData) || !expenseData.length) return []
+
+    // index PO items ตามเลขที่อ้างอิง (ทำครั้งเดียว) — เดิมเรียก poItems.filter() ใหม่
+    // ทุกรอบของ loop expense → O(expense × poItems) เป็นหลักล้านครั้งเมื่อข้อมูลครบปี
+    // ใช้ Set กันกรณี doc_number == invoice_number จะได้ไม่ push แถวเดิมซ้ำ (ตรงกับ .filter เดิม)
+    const poItemsByRef = new Map()
+    if (Array.isArray(poItems)) {
+      for (const p of poItems) {
+        const keys = new Set([p?.doc_number, p?.invoice_number].filter(Boolean).map(String))
+        for (const key of keys) {
+          const bucket = poItemsByRef.get(key)
+          if (bucket) bucket.push(p)
+          else poItemsByRef.set(key, [p])
+        }
+      }
+    }
+
     const rows = []
     for (const exp of expenseData) {
       const [itemKey, itemList] = findApItemList(exp)
@@ -289,9 +305,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         const refPo = exp?.reference || exp?.po || exp?.po_number || ''
 
         // Fallback to PO items if this EXP has a Ref PO but no items of its own
-        const matchedPoItems = refPo && Array.isArray(poItems) 
-          ? poItems.filter(p => p.doc_number === refPo || p.invoice_number === refPo) 
-          : []
+        const matchedPoItems = refPo ? poItemsByRef.get(String(refPo)) || [] : []
 
         if (matchedPoItems.length > 0) {
           for (const poItem of matchedPoItems) {
@@ -948,20 +962,18 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     return Date.now() - new Date(last).getTime() > SYNC_MIN_INTERVAL_MS
   }
 
-  // ── public: โหลดข้อมูลเข้าหน้าเว็บ (อ่านจาก Supabase) + sync ตามจำเป็น ────────
-  async function fetchAll(options = {}) {
+  // ── sync เบื้องหลัง: ไม่ถือ `loading` จึงไม่ทำให้ทุกหน้าขึ้นสปินเนอร์ ────────────
+  // เดิม fetchAll await incrementalSync() ทั้งก้อนโดยถือ loading ไว้ → เปิดแอปแล้ว
+  // ทุกหน้าค้างที่ "กำลังโหลดข้อมูล..." ตลอดเวลาที่ยิง TRCloud (5 ชนิด × หลายหน้า)
+  // ทั้งที่ข้อมูลจาก Supabase พร้อมโชว์แล้ว ตอนนี้แยกเป็น: อ่าน Supabase = บล็อก (เร็ว),
+  // sync TRCloud = เบื้องหลัง (ความคืบหน้าดูได้จาก syncing/syncMessage ที่ AdminHeader)
+  function syncInBackground(options = {}) {
     const { force = false } = options
-    if (loading.value) return
-    loading.value = true
-    try {
-      await loadAll() // paint จาก Supabase (cache-aware — ข้ามชนิดที่ยังสด)
-      let state = await refreshSyncState()
-      const total = await countDocs()
-      if (total === 0) {
-        // warehouse ว่างจริง → ดึงทั้งปี (ครั้งแรกสุดเท่านั้น)
-        await backfillThisYear()
-      } else {
-        // มีข้อมูลแล้ว: ถ้า flag ยังว่าง (เช่นข้อมูลมาจากการ pull รายหน้า) → เซ็ตให้ กันทุกหน้าดึงซ้ำ
+    if (syncing.value) return
+    void (async () => {
+      try {
+        let state = await refreshSyncState()
+        // flag ยังว่าง (เช่นข้อมูลมาจากการ pull รายหน้า) → เซ็ตให้ กันทุกหน้าดึงซ้ำ
         if (!state?.last_full_backfill) {
           const nowIso = new Date().toISOString()
           await setSyncState({
@@ -971,15 +983,38 @@ export const useTrcloudStore = defineStore('trcloud', () => {
           state = await refreshSyncState()
         }
         if (force || isIncrementalStale(state)) {
-          // incrementalSync/backfill รีโหลดแต่ละชนิดให้อยู่แล้ว ไม่ต้อง loadAll ซ้ำ
+          // incrementalSync รีโหลดแต่ละชนิดจาก warehouse ให้เอง → ตารางอัพเดทเองเมื่อเสร็จ
           await incrementalSync()
         }
+      } catch (err) {
+        console.error('sync เบื้องหลังล้มเหลว:', err)
       }
+    })()
+  }
+
+  // ── public: โหลดข้อมูลเข้าหน้าเว็บ (อ่านจาก Supabase) + sync ตามจำเป็น ────────
+  async function fetchAll(options = {}) {
+    const { force = false } = options
+    if (loading.value) return
+    loading.value = true
+    try {
+      await loadAll() // paint จาก Supabase (cache-aware — ข้ามชนิดที่ยังสด)
+
+      // ถ้าไม่มีอะไรให้ดูเลยจริง ๆ ต้องรอ backfill (ไม่มีประโยชน์ที่จะปล่อยจอว่าง)
+      const hasAnyRows = ALL_TYPES.some((t) => getRowsByType(t).length > 0)
+      if (!hasAnyRows && (await countDocs()) === 0) {
+        await backfillThisYear()
+        return
+      }
+
       lastFetched.value = new Date()
       persistMeta()
     } finally {
       loading.value = false
     }
+
+    // มีข้อมูลโชว์แล้ว → ที่เหลือทำเบื้องหลัง ผู้ใช้ใช้งานต่อได้ทันที
+    syncInBackground({ force })
   }
 
   // โหลด/อัพเดทเฉพาะชนิดเดียว (apView/poView/expView/... เรียก)
@@ -1029,6 +1064,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     fetchAll, fetchTrcloudData,
     // ── warehouse / sync ──
     syncing, syncPhase, syncMessage, syncState,
-    backfillThisYear, incrementalSync, quickSyncAll, loadAll, loadType, refreshSyncState,
+    backfillThisYear, incrementalSync, quickSyncAll, syncInBackground,
+    loadAll, loadType, refreshSyncState,
   }
 })

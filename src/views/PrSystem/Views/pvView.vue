@@ -3,6 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { formatDocNo } from '@/utils/docNumber'
 import { useDebounced } from '@/composables/useDebounced'
+import { usePagination } from '@/composables/usePagination'
+import { rowSearchBlob } from '@/utils/searchBlob'
+import TablePager from '@/components/TablePager.vue'
 
 const trcloudStore = useTrcloudStore()
 const trcloudPvRows = computed(() => trcloudStore.pvRows)
@@ -82,9 +85,7 @@ const filteredTrcloudRows = computed(() => {
     })
   }
   
-  const filtered = rows.filter(r =>
-    (formatDocNo(r, 'PV') + ' ' + JSON.stringify(r)).toLowerCase().includes(q)
-  )
+  const filtered = rows.filter(r => rowSearchBlob(r, formatDocNo(r, 'PV')).includes(q))
 
   // Sort by Date Descending (Newest first)
   return [...filtered].sort((a, b) => {
@@ -93,6 +94,9 @@ const filteredTrcloudRows = computed(() => {
     return dateB.localeCompare(dateA)
   })
 })
+
+// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 1,100 แถวรวดเดียว
+const pager = usePagination(filteredTrcloudRows, { storageKey: 'pv' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -213,7 +217,7 @@ function getDocMonth(row) {
             <tr v-else-if="!filteredTrcloudRows.length">
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PV จาก TRCLOUD</td>
             </tr>
-            <tr v-for="r in filteredTrcloudRows" :key="r.payment_id || r.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="r in pager.pagedRows" :key="r.payment_id || r.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-medium font-mono" style="color: #10b981; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PV') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
@@ -232,6 +236,19 @@ function getDocMonth(row) {
           </tbody>
         </table>
       </div>
+
+      <TablePager
+        :page="pager.page"
+        :page-size="pager.pageSize"
+        :total="pager.total"
+        :total-pages="pager.totalPages"
+        :start-index="pager.startIndex"
+        :shown="pager.pagedRows.length"
+        @prev="pager.prev()"
+        @next="pager.next()"
+        @go-to="pager.goTo($event)"
+        @update:page-size="pager.setPageSize($event)"
+      />
     </div>
   </div>
 </template>

@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
+import { usePagination } from '@/composables/usePagination'
+import TablePager from '@/components/TablePager.vue'
 
 const trcloudStore = useTrcloudStore()
 const searchQuery = ref('')
@@ -61,6 +63,9 @@ const filteredRows = computed(() => {
   }
   return rows.sort((a, b) => a.docNumber.localeCompare(b.docNumber))
 })
+
+// Tier C: ตัดเป็นหน้า ๆ — หน้านี้รวมเอกสารทุกชนิดไว้ด้วยกัน จำนวนแถวจึงมากที่สุด
+const pager = usePagination(filteredRows, { storageKey: 'trcloud_docs' })
 
 const availableStatuses = computed(() => {
   const statuses = combinedRows.value.map((row) => row.status).filter(Boolean)
@@ -158,7 +163,7 @@ onMounted(() => {
             <tr v-if="filteredRows.length === 0">
               <td colspan="7" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการเอกสาร</td>
             </tr>
-            <tr v-for="row in filteredRows" :key="row.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
+            <tr v-for="row in pager.pagedRows" :key="row.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" style="border-bottom: 1px solid var(--color-border)">
               <td class="px-4 py-3 font-mono break-all" style="color: var(--color-text-primary)">{{ row.docNumber }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.date }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary)">{{ row.type }}</td>
@@ -174,6 +179,19 @@ onMounted(() => {
           </tbody>
         </table>
       </div>
+
+      <TablePager
+        :page="pager.page"
+        :page-size="pager.pageSize"
+        :total="pager.total"
+        :total-pages="pager.totalPages"
+        :start-index="pager.startIndex"
+        :shown="pager.pagedRows.length"
+        @prev="pager.prev()"
+        @next="pager.next()"
+        @go-to="pager.goTo($event)"
+        @update:page-size="pager.setPageSize($event)"
+      />
     </div>
   </div>
 </template>

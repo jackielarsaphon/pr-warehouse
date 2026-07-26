@@ -5,6 +5,9 @@ import { useAuthStore } from '@/stores/auth'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { formatDocNo } from '@/utils/docNumber'
 import { useDebounced } from '@/composables/useDebounced'
+import { usePagination } from '@/composables/usePagination'
+import { rowSearchBlob } from '@/utils/searchBlob'
+import TablePager from '@/components/TablePager.vue'
 
 const props = defineProps({
   initialTab: { type: String, default: 'pr' },
@@ -285,9 +288,7 @@ const filteredTrcloudRows = computed(() => {
   // Search filter (ใช้ค่า debounce) — รวมเลขที่มี prefix (เช่น PR26xxxxxx) ให้ค้นเจอด้วย
   const q = debouncedFilter.value.toLowerCase().trim()
   if (q) {
-    result = result.filter(r =>
-      (formatDocNo(r, 'PR') + ' ' + JSON.stringify(r)).toLowerCase().includes(q)
-    )
+    result = result.filter(r => rowSearchBlob(r, formatDocNo(r, 'PR')).includes(q))
   }
 
   // ✅ เรียงตาม frozenOrder (snapshot ตอน mount/fetch) → ติ๊กแล้วไม่กระโดด
@@ -311,6 +312,9 @@ const filteredTrcloudRows = computed(() => {
     return dB.localeCompare(dA)
   })
 })
+
+// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 2,200 แถวรวดเดียว
+const pager = usePagination(filteredTrcloudRows, { storageKey: 'pr' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -540,7 +544,7 @@ function getDisplayBadgeInfo(row) {
                  ทำให้ checkbox focus/state ไม่กระโดดไปที่ row อื่น
             -->
             <tr
-              v-for="r in filteredTrcloudRows"
+              v-for="r in pager.pagedRows"
               :key="getRowIdentity(r)"
               class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
@@ -580,6 +584,19 @@ function getDisplayBadgeInfo(row) {
           </tbody>
         </table>
       </div>
+
+      <TablePager
+        :page="pager.page"
+        :page-size="pager.pageSize"
+        :total="pager.total"
+        :total-pages="pager.totalPages"
+        :start-index="pager.startIndex"
+        :shown="pager.pagedRows.length"
+        @prev="pager.prev()"
+        @next="pager.next()"
+        @go-to="pager.goTo($event)"
+        @update:page-size="pager.setPageSize($event)"
+      />
     </div>
   </div>
 </template>
