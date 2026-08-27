@@ -286,14 +286,12 @@ async function addRow() {
   const { error } = await supabase.from(TABLE).insert(toDbPayload(row))
   row.saving = false
   if (error) dbError.value = error.message
-  else scheduleAutoSync(800)
 }
 
 async function deleteRow(id) {
   rows.value = rows.value.filter(r => r.id !== id)
   const { error } = await supabase.from(TABLE).delete().eq('id', id)
   if (error) dbError.value = error.message
-  else scheduleAutoSync(800)
 }
 
 function onFieldChange(row) {
@@ -304,7 +302,7 @@ function onFieldChange(row) {
     const { error } = await supabase.from(TABLE).upsert(toDbPayload(row))
     row.saving = false
     if (error) dbError.value = error.message
-    else scheduleAutoSync(800)
+    else if (isFlagged(row.id)) scheduleAutoSync(800)
   }, 600)
 }
 
@@ -393,44 +391,6 @@ function lookupDoc(q) {
     if (found) return found
   }
   return null
-}
-
-function hasDocumentInTrcloud(docNumber) {
-  return Boolean(lookupDoc(docNumber || ''))
-}
-
-async function pruneMissingRows() {
-  if (!rows.value.length) return
-  const toDelete = rows.value.filter((r) => {
-    const doc = String(r.doc_number || '').trim()
-    if (!doc) return false
-    return !hasDocumentInTrcloud(doc)
-  })
-  if (!toDelete.length) return
-
-  const deleteIds = toDelete.map((r) => r.id)
-  const deleteDocNumbers = toDelete.map((r) => r.doc_number).filter(Boolean)
-
-  rows.value = rows.value.filter((r) => !deleteIds.includes(r.id))
-  flaggedIds.value = flaggedIds.value.filter((id) => !deleteIds.includes(id))
-  const byMap = { ...flaggedByMap.value }
-  for (const id of deleteIds) delete byMap[id]
-  flaggedByMap.value = byMap
-
-  const { error } = await supabase.from(TABLE).delete().in('id', deleteIds)
-  if (error) {
-    dbError.value = `ลบเอกสารที่ไม่พบไม่สำเร็จ: ${error.message}`
-    return
-  }
-
-  await supabase
-    .from(FLAGGED_TABLE)
-    .delete()
-    .eq('doc_type', FLAGGED_DOC_TYPE)
-    .in('doc_key', deleteIds)
-
-  scheduleAutoSync(500)
-  console.warn('[urgent-payment] removed missing documents:', deleteDocNumbers.join(', '))
 }
 
 async function onDocNumberInput(row) {
@@ -529,7 +489,6 @@ async function confirmBulkPaste() {
     bulkProgress.value.done++
   }
   bulkProgress.value.running = false
-  scheduleAutoSync(800)
 }
 
 // ประมาณการ THB per row
@@ -729,19 +688,16 @@ function handleRealtimeChange(payload) {
   }
 }
 
-onMounted(async () => {
+onMounted(() => {
   loadRates()
-  await Promise.all([loadFlagged(), loadRows(), loadTracking()])
+  loadFlagged()
+  loadRows()
+  loadTracking()
   // re-fetch ทุกครั้งที่เปิดหน้า เพื่อให้สถานะจ่ายเงินอัพเดทเสมอ
-  await Promise.all([
-    trcloudStore.fetchTrcloudData('ap'),
-    trcloudStore.fetchTrcloudData('po'),
-    trcloudStore.fetchTrcloudData('expense'),
-    trcloudStore.fetchTrcloudData('pv'),
-  ])
-  // ปิดชั่วคราว: warehouse โหลดแค่ช่วงวันที่ → ใบเก่านอกช่วงถูกมองว่า "หาย" แล้วซ่อนแถวมั่ว ๆ
-  // (เป็นเหตุให้รายการหาย ๆ กลับ ๆ) เดี๋ยวออกแบบใหม่ให้เช็คกับ warehouse ทั้งก้อนก่อนค่อยเปิด
-  // await pruneMissingRows()
+  trcloudStore.fetchTrcloudData('ap')
+  trcloudStore.fetchTrcloudData('po')
+  trcloudStore.fetchTrcloudData('expense')
+  trcloudStore.fetchTrcloudData('pv')
 
   realtimeChannel = supabase
     .channel('urgent_payment_rows_rt')
@@ -779,7 +735,7 @@ async function syncToSheets() {
     ]
     const payload = {
       headers,
-      rows: rows.value.map(r => {
+      rows: rows.value.filter(r => isFlagged(r.id)).map(r => {
         const approx = (parseFloat(r.kip || 0) / rates.value.KIP) + parseFloat(r.thb || 0) + (parseFloat(r.usd || 0) * rates.value.USD)
         return {
           doc_number: r.doc_number,
@@ -807,7 +763,8 @@ async function syncToSheets() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    syncMsg.value = `✓ Sync แล้ว ${rows.value.length} รายการ`
+    const flaggedCount = rows.value.filter(r => isFlagged(r.id)).length
+    syncMsg.value = `✓ Sync แล้ว ${flaggedCount} รายการจ่ายด่วน`
   } catch (err) {
     syncMsg.value = '✗ Sync ล้มเหลว: ' + (err.message || err)
   } finally {
@@ -816,7 +773,7 @@ async function syncToSheets() {
   }
 }
 
-// ─── Auto-sync: trigger syncToSheets whenever rows change ─────────
+// ─── Auto-sync: trigger syncToSheets whenever flagged rows change ─────────
 let autoSyncTimer = null
 function scheduleAutoSync(delay = 1500) {
   clearTimeout(autoSyncTimer)

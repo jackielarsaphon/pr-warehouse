@@ -3,11 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useTrcloudStore } from '@/stores/trcloud'
-import { formatDocNo } from '@/utils/docNumber'
-import { useDebounced } from '@/composables/useDebounced'
-import { usePagination } from '@/composables/usePagination'
-import { rowSearchBlob } from '@/utils/searchBlob'
-import TablePager from '@/components/TablePager.vue'
 
 const props = defineProps({
   initialTab: { type: String, default: 'pr' },
@@ -33,7 +28,6 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
-const debouncedFilter = useDebounced(trcloudFilter, 250)
 const _viewMode = ref('all')
 
 // ✅ เมื่อสลับไปหน้า 'tracking' ให้ rebuild frozenOrder ใหม่
@@ -213,7 +207,7 @@ async function fetchTrcloudData() {
 // ล้างข้อมูลทุกครั้งที่ข้อมูลใน Store เปลี่ยนแปลง
 watch(() => trcloudStore.prRows, () => {
   cleanupTrackedIds()
-})
+}, { deep: true })
 
 onMounted(() => {
   loadTrackedRowIdsFromCloud()
@@ -244,7 +238,7 @@ watch(
     // แต่จะไม่ถูกเรียกตอนแค่ติ๊ก checkbox เพราะ prRows ไม่เปลี่ยน
     buildFrozenOrder(rows)
   },
-  { immediate: true }
+  { immediate: true, deep: true }
 )
 
 const filteredTrcloudRows = computed(() => {
@@ -285,10 +279,12 @@ const filteredTrcloudRows = computed(() => {
     result = result.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter (ใช้ค่า debounce) — รวมเลขที่มี prefix (เช่น PR26xxxxxx) ให้ค้นเจอด้วย
-  const q = debouncedFilter.value.toLowerCase().trim()
+  // Search filter
+  const q = trcloudFilter.value.toLowerCase().trim()
   if (q) {
-    result = result.filter(r => rowSearchBlob(r, formatDocNo(r, 'PR')).includes(q))
+    result = result.filter(r =>
+      JSON.stringify(r).toLowerCase().includes(q)
+    )
   }
 
   // ✅ เรียงตาม frozenOrder (snapshot ตอน mount/fetch) → ติ๊กแล้วไม่กระโดด
@@ -312,9 +308,6 @@ const filteredTrcloudRows = computed(() => {
     return dB.localeCompare(dA)
   })
 })
-
-// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 2,200 แถวรวดเดียว
-const pager = usePagination(filteredTrcloudRows, { storageKey: 'pr' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -531,7 +524,7 @@ function getDisplayBadgeInfo(row) {
               <td colspan="10" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
+                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
                 </div>
               </td>
             </tr>
@@ -544,12 +537,12 @@ function getDisplayBadgeInfo(row) {
                  ทำให้ checkbox focus/state ไม่กระโดดไปที่ row อื่น
             -->
             <tr
-              v-for="r in pager.pagedRows"
+              v-for="r in filteredTrcloudRows"
               :key="getRowIdentity(r)"
               class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
             >
-              <td class="px-4 py-3 font-medium font-mono" style="color: #00d4ff; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PR') }}</td>
+              <td class="px-4 py-3 font-medium font-mono" style="color: #00d4ff; border-right: 1px solid var(--color-border)">{{ r.document_number || r.pr_id || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>
@@ -584,19 +577,6 @@ function getDisplayBadgeInfo(row) {
           </tbody>
         </table>
       </div>
-
-      <TablePager
-        :page="pager.page"
-        :page-size="pager.pageSize"
-        :total="pager.total"
-        :total-pages="pager.totalPages"
-        :start-index="pager.startIndex"
-        :shown="pager.pagedRows.length"
-        @prev="pager.prev()"
-        @next="pager.next()"
-        @go-to="pager.goTo($event)"
-        @update:page-size="pager.setPageSize($event)"
-      />
     </div>
   </div>
 </template>

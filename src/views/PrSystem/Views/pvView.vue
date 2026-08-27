@@ -1,11 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
-import { formatDocNo } from '@/utils/docNumber'
-import { useDebounced } from '@/composables/useDebounced'
-import { usePagination } from '@/composables/usePagination'
-import { rowSearchBlob } from '@/utils/searchBlob'
-import TablePager from '@/components/TablePager.vue'
 
 const trcloudStore = useTrcloudStore()
 const trcloudPvRows = computed(() => trcloudStore.pvRows)
@@ -19,7 +14,6 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
-const debouncedFilter = useDebounced(trcloudFilter, 250)
 const monthFilter = ref('')
 const monthOptions = [
   { value: '01', label: 'มกราคม' },
@@ -45,9 +39,8 @@ const trcloudKpi = computed(() => {
   }
 })
 
-async function fetchTrcloudData(force = false) {
-  // force=true (กดปุ่ม) = ดึงเร็วจาก TRCloud; force=false (ตอน mount) = อ่านจาก Supabase
-  await trcloudStore.fetchTrcloudData('pv', { force })
+async function fetchTrcloudData() {
+  await trcloudStore.fetchTrcloudData('pv')
 }
 
 onMounted(() => {
@@ -75,7 +68,7 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  const q = debouncedFilter.value.toLowerCase().trim()
+  const q = trcloudFilter.value.toLowerCase().trim()
   if (!q) {
     // Sort by Date Descending (Newest first)
     return [...rows].sort((a, b) => {
@@ -85,7 +78,9 @@ const filteredTrcloudRows = computed(() => {
     })
   }
   
-  const filtered = rows.filter(r => rowSearchBlob(r, formatDocNo(r, 'PV')).includes(q))
+  const filtered = rows.filter(r => 
+    JSON.stringify(r).toLowerCase().includes(q)
+  )
 
   // Sort by Date Descending (Newest first)
   return [...filtered].sort((a, b) => {
@@ -94,9 +89,6 @@ const filteredTrcloudRows = computed(() => {
     return dateB.localeCompare(dateA)
   })
 })
-
-// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 1,100 แถวรวดเดียว
-const pager = usePagination(filteredTrcloudRows, { storageKey: 'pv' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -175,7 +167,7 @@ function getDocMonth(row) {
               <option v-for="m in monthOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
             </select>
           </div>
-          <button @click="fetchTrcloudData(true)" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+          <button @click="fetchTrcloudData" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
             <i class="fa-solid fa-rotate mr-1" :class="trcloudLoading ? 'fa-spin' : ''"></i>
             ดึงข้อมูล
           </button>
@@ -210,15 +202,15 @@ function getDocMonth(row) {
               <td colspan="10" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
+                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
                 </div>
               </td>
             </tr>
             <tr v-else-if="!filteredTrcloudRows.length">
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PV จาก TRCLOUD</td>
             </tr>
-            <tr v-for="r in pager.pagedRows" :key="r.payment_id || r.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
-              <td class="px-4 py-3 font-medium font-mono" style="color: #10b981; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PV') }}</td>
+            <tr v-for="r in filteredTrcloudRows" :key="r.payment_id || r.id" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
+              <td class="px-4 py-3 font-medium font-mono" style="color: #10b981; border-right: 1px solid var(--color-border)">{{ (r.company_format || '') + (r.document_number || r.payment_id || '-') }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>
@@ -236,19 +228,6 @@ function getDocMonth(row) {
           </tbody>
         </table>
       </div>
-
-      <TablePager
-        :page="pager.page"
-        :page-size="pager.pageSize"
-        :total="pager.total"
-        :total-pages="pager.totalPages"
-        :start-index="pager.startIndex"
-        :shown="pager.pagedRows.length"
-        @prev="pager.prev()"
-        @next="pager.next()"
-        @go-to="pager.goTo($event)"
-        @update:page-size="pager.setPageSize($event)"
-      />
     </div>
   </div>
 </template>

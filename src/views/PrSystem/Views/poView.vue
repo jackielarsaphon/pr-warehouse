@@ -3,11 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
-import { formatDocNo } from '@/utils/docNumber'
-import { useDebounced } from '@/composables/useDebounced'
-import { usePagination } from '@/composables/usePagination'
-import { rowSearchBlob } from '@/utils/searchBlob'
-import TablePager from '@/components/TablePager.vue'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -22,7 +17,6 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
-const debouncedFilter = useDebounced(trcloudFilter, 250)
 const viewMode = ref('all') // 'all' or 'tracking'
 const projectFilter = ref('')
 const statusFilter = ref('')
@@ -145,16 +139,15 @@ const trcloudKpi = computed(() => {
   }
 })
 
-async function fetchTrcloudData(force = false) {
-  // force=true (กดปุ่ม) = ดึงเร็วจาก TRCloud; force=false (ตอน mount) = อ่านจาก Supabase
-  await trcloudStore.fetchTrcloudData('po', { force })
+async function fetchTrcloudData() {
+  await trcloudStore.fetchTrcloudData('po')
   cleanupTrackedIds()
 }
 
 // ล้างข้อมูลทุกครั้งที่ข้อมูลใน Store เปลี่ยนแปลง
 watch(() => trcloudStore.poRows, () => {
   cleanupTrackedIds()
-})
+}, { deep: true })
 
 onMounted(() => {
   loadTrackedRowIdsFromCloud()
@@ -180,7 +173,7 @@ watch(
       setTrackedCloud(removedIds, false)
     }
   },
-  { immediate: true }
+  { immediate: true, deep: true }
 )
 
 // --- Helper: หา row identity (unique_id) ---
@@ -267,10 +260,12 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter (ใช้ค่า debounce) — รวมเลขที่มี prefix (เช่น PO26xxxxxx) ให้ค้นเจอด้วย
-  const q = debouncedFilter.value.toLowerCase().trim()
+  // Search filter
+  const q = trcloudFilter.value.toLowerCase().trim()
   if (q) {
-    rows = rows.filter(r => rowSearchBlob(r, formatDocNo(r, 'PO')).includes(q))
+    rows = rows.filter(r =>
+      JSON.stringify(r).toLowerCase().includes(q)
+    )
   }
 
   // Sort
@@ -296,9 +291,6 @@ const filteredTrcloudRows = computed(() => {
     return dateB.localeCompare(dateA)
   })
 })
-
-// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 2,500 แถวรวดเดียว
-const pager = usePagination(filteredTrcloudRows, { storageKey: 'po' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -440,7 +432,7 @@ function getDisplayBadgeInfo(row) {
           </select>
         </div>
 
-        <button @click="fetchTrcloudData(true)" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+        <button @click="fetchTrcloudData" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
           <i class="fa-solid fa-rotate mr-1" :class="trcloudLoading ? 'fa-spin' : ''"></i>
           ดึงข้อมูล
         </button>
@@ -475,7 +467,7 @@ function getDisplayBadgeInfo(row) {
               <td colspan="11" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
+                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
                 </div>
               </td>
             </tr>
@@ -483,12 +475,12 @@ function getDisplayBadgeInfo(row) {
               <td colspan="11" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล PO จาก TRCLOUD</td>
             </tr>
             <tr
-              v-for="r in pager.pagedRows"
+              v-for="r in filteredTrcloudRows"
               :key="r.unique_id || r.po_id || r.id"
               class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
             >
-              <td class="px-4 py-3 font-medium font-mono" style="color: #7c3aed; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'PO') }}</td>
+              <td class="px-4 py-3 font-medium font-mono" style="color: #7c3aed; border-right: 1px solid var(--color-border)">{{ r.document_number || r.po_id || '-' }}</td>
               <td class="px-4 py-3 font-mono" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.expense || r.expense_no || r.expense_number || r.expense_doc || r.expense_id || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
@@ -514,19 +506,6 @@ function getDisplayBadgeInfo(row) {
           </tbody>
         </table>
       </div>
-
-      <TablePager
-        :page="pager.page"
-        :page-size="pager.pageSize"
-        :total="pager.total"
-        :total-pages="pager.totalPages"
-        :start-index="pager.startIndex"
-        :shown="pager.pagedRows.length"
-        @prev="pager.prev()"
-        @next="pager.next()"
-        @go-to="pager.goTo($event)"
-        @update:page-size="pager.setPageSize($event)"
-      />
     </div>
   </div>
 </template>

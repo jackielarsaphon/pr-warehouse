@@ -4,8 +4,6 @@ import { useTrcloudStore } from '@/stores/trcloud'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useTrackingStatus } from '@/composables/useTrackingStatus'
-import { usePagination } from '@/composables/usePagination'
-import TablePager from '@/components/TablePager.vue'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -234,9 +232,6 @@ const filteredRows = computed(() => {
     return dateB.localeCompare(dateA)
   })
 })
-
-// Tier C: ตัดเป็นหน้า ๆ — รายการสินค้าแตกจากเอกสาร 1 ใบได้หลายสิบแถว จำนวนจึงบานง่าย
-const pager = usePagination(filteredRows, { storageKey: 'ap_items' })
 
 const itemCount = computed(() => (trcloudStore.apItemRows || []).length)
 const invoiceCount = computed(() => (trcloudStore.apRows || []).length)
@@ -482,14 +477,14 @@ onMounted(() => {
               <td colspan="13" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
+                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
                 </div>
               </td>
             </tr>
             <tr v-else-if="!filteredRows.length">
               <td colspan="13" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบรายการ AP รายการสินค้า</td>
             </tr>
-            <tr v-for="(row, index) in pager.pagedRows" :key="getRowIdentity(row)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" :style="{ borderBottom: '1px solid var(--color-border)', ...(isAddedToTracking(row) ? { boxShadow: 'inset 3px 0 0 #16a34a', background: 'rgba(16,185,129,0.06)' } : {}) }">
+            <tr v-for="(row, index) in filteredRows" :key="getRowIdentity(row)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors" :style="{ borderBottom: '1px solid var(--color-border)', ...(isAddedToTracking(row) ? { boxShadow: 'inset 3px 0 0 #16a34a', background: 'rgba(16,185,129,0.06)' } : {}) }">
               <td class="px-4 py-3 text-center relative" style="border-right: 1px solid var(--color-border)">
                 <div v-if="showSelection">
                   <input 
@@ -574,19 +569,6 @@ onMounted(() => {
           </tbody>
         </table>
       </div>
-
-      <TablePager
-        :page="pager.page"
-        :page-size="pager.pageSize"
-        :total="pager.total"
-        :total-pages="pager.totalPages"
-        :start-index="pager.startIndex"
-        :shown="pager.pagedRows.length"
-        @prev="pager.prev()"
-        @next="pager.next()"
-        @go-to="pager.goTo($event)"
-        @update:page-size="pager.setPageSize($event)"
-      />
     </div>
   </div>
 </template>

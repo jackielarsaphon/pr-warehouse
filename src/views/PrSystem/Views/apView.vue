@@ -3,19 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useTrcloudStore } from '@/stores/trcloud'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
-import { formatDocNo } from '@/utils/docNumber'
-import { useDebounced } from '@/composables/useDebounced'
-import { usePagination } from '@/composables/usePagination'
-import { rowSearchBlob } from '@/utils/searchBlob'
-import TablePager from '@/components/TablePager.vue'
-import Swal from 'sweetalert2'
-
-// toast แจ้งเตือนมุมขวาบน (ไม่บล็อกการทำงาน)
-function urgentToast(icon, title) {
-  try {
-    Swal.fire({ toast: true, position: 'top-end', icon, title, showConfirmButton: false, timer: 2600, timerProgressBar: true })
-  } catch (e) {}
-}
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -30,7 +17,6 @@ const trcloudDateTo = computed({
   set: (val) => trcloudStore.dateTo = val
 })
 const trcloudFilter = ref('')
-const debouncedFilter = useDebounced(trcloudFilter, 250) // ค้นหาแบบหน่วง ลดการ filter ทุกคีย์
 const viewMode = ref('all') // 'all' or 'tracking'
 const projectFilter = ref('')
 const statusFilter = ref('')
@@ -131,9 +117,8 @@ const trcloudKpi = computed(() => {
   }
 })
 
-async function fetchTrcloudData(force = false) {
-  // force=true (กดปุ่ม) = ดึงเร็วจาก TRCloud; force=false (ตอน mount) = อ่านจาก Supabase
-  await trcloudStore.fetchTrcloudData('ap', { force })
+async function fetchTrcloudData() {
+  await trcloudStore.fetchTrcloudData('ap')
 }
 
 onMounted(() => {
@@ -160,7 +145,7 @@ watch(
       removedIds.forEach((id) => setTrackedCloud(id, false))
     }
   },
-  { immediate: true }
+  { immediate: true, deep: true }
 )
 
 const filteredTrcloudRows = computed(() => {
@@ -200,10 +185,12 @@ const filteredTrcloudRows = computed(() => {
     rows = rows.filter(r => getDocMonth(r) === monthFilter.value)
   }
 
-  // Search filter (ใช้ค่า debounce) — รวมเลขที่มี prefix (เช่น AP26060073) ให้ค้นเจอด้วย
-  const q = debouncedFilter.value.toLowerCase().trim()
+  // Search filter
+  const q = trcloudFilter.value.toLowerCase().trim()
   if (q) {
-    rows = rows.filter(r => rowSearchBlob(r, formatDocNo(r, 'AP')).includes(q))
+    rows = rows.filter(r => 
+      JSON.stringify(r).toLowerCase().includes(q)
+    )
   }
 
   // Sort by Tracking status first, then by Date Descending
@@ -233,9 +220,6 @@ const filteredTrcloudRows = computed(() => {
     return dateB.localeCompare(dateA)
   })
 })
-
-// Tier C: ตัดเป็นหน้า ๆ — render แค่หน้าละ 100 แถว แทนที่จะวาดทั้ง 2,500 แถวรวดเดียว
-const pager = usePagination(filteredTrcloudRows, { storageKey: 'ap' })
 
 function getTrcloudBadgeInfo(status) {
   if (!status) return { text: '—', bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', border: 'rgba(148,163,184,0.3)' }
@@ -289,44 +273,6 @@ function isTracked(row) {
   return id ? trackedRowIds.value.includes(id) : false
 }
 
-// กดติดตาม AP → เพิ่มเอกสารนั้นเป็น "แถว" ในหน้าสรุปขอจ่ายด่วน (urgent_payment_rows)
-// fire-and-forget + กันซ้ำด้วย doc_number — ถ้าพลาดก็ไม่กระทบการติดตาม (หน้าจ่ายด่วนรับผ่าน realtime เดิม)
-async function addToUrgentPayment(apRow) {
-  try {
-    const docNo = formatDocNo(apRow, 'AP')
-    if (!docNo || docNo === '-') return
-    const { data: existing } = await supabase
-      .from('urgent_payment_rows')
-      .select('id')
-      .eq('doc_number', docNo)
-      .limit(1)
-    if (existing && existing.length) {
-      // มีอยู่แล้ว → เตือน ไม่เพิ่มซ้ำ
-      urgentToast('warning', `${docNo} มีในหน้าจ่ายด่วนอยู่แล้ว — ไม่เพิ่มซ้ำ`)
-      return
-    }
-
-    const cur = String(apRow.currency || apRow.fx || 'LAK').toUpperCase()
-    const amt = String(apRow.grand_total || apRow.total || '')
-    const payload = {
-      id: crypto.randomUUID(),
-      doc_number: docNo,
-      vendor: apRow.organization || apRow.name || '',
-      items: apRow.invoice_note || apRow.remark || apRow.note || apRow.description || '',
-      cost_center: apRow.project || apRow.project_name || apRow.department || '',
-      air_code: '',
-      reason: 'ติดตามจากหน้า AP',
-      kip: (cur === 'LAK' || cur === 'KIP') ? amt : '',
-      thb: cur === 'THB' ? amt : '',
-      usd: cur === 'USD' ? amt : '',
-      staff: auth.user?.fullname || auth.user?.username || '',
-      status: 'ตามของ',
-    }
-    const { error } = await supabase.from('urgent_payment_rows').insert(payload)
-    if (!error) urgentToast('success', `เพิ่ม ${docNo} เข้าหน้าจ่ายด่วนแล้ว`)
-  } catch (e) { /* เงียบไว้ ไม่ให้กระทบการติดตาม */ }
-}
-
 function toggleTracked(row, checked) {
   const currentId = getRowIdentity(row)
   if (!currentId) return
@@ -345,7 +291,6 @@ function toggleTracked(row, checked) {
     
     persistTrackedRowIds()
     setTrackedCloud(sameDocIds, true)
-    addToUrgentPayment(row) // เพิ่มเอกสารนี้เข้าไปในหน้าจ่ายด่วน
   } else {
     // Uncheck: only remove the current item
     trackedRowIds.value = trackedRowIds.value.filter((x) => x !== currentId)
@@ -402,12 +347,6 @@ function getDisplayBadgeInfo(row) {
       </button>
     </div>
 
-    <!-- Hint: ติดตาม → เข้าหน้าจ่ายด่วน -->
-    <div class="flex items-start gap-2 mb-6 px-3 py-2.5 rounded-lg text-[12px] border" style="background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.25); color: var(--color-text-muted)">
-      <i class="fa-solid fa-circle-info text-blue-500 mt-0.5"></i>
-      <span>ติ๊ก <b style="color:#ef4444">“ติดตาม”</b> ที่รายการไหน รายการนั้นจะไปแสดงในหน้า <b style="color: var(--color-text-primary)">สรุปขอจ่ายด่วน</b> ให้อัตโนมัติ (เฉพาะรายการ AP)</span>
-    </div>
-
     <!-- KPI Card -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <div class="p-4 rounded-xl border relative overflow-hidden" style="background: var(--color-bg-card); border-color: var(--color-border)">
@@ -460,7 +399,7 @@ function getDisplayBadgeInfo(row) {
           </select>
         </div>
 
-        <button @click="fetchTrcloudData(true)" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+        <button @click="fetchTrcloudData" :disabled="trcloudLoading" class="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
           <i class="fa-solid fa-rotate mr-1" :class="trcloudLoading ? 'fa-spin' : ''"></i>
           ดึงข้อมูล
         </button>
@@ -494,15 +433,15 @@ function getDisplayBadgeInfo(row) {
               <td colspan="10" class="px-4 py-12 text-center">
                 <div class="flex flex-col items-center gap-2">
                   <i class="fa-solid fa-circle-notch fa-spin text-2xl text-blue-500"></i>
-                  <span style="color: var(--color-text-muted)">กำลังโหลดข้อมูล...</span>
+                  <span style="color: var(--color-text-muted)">กำลังดึงข้อมูลจาก TRCLOUD...</span>
                 </div>
               </td>
             </tr>
             <tr v-else-if="!filteredTrcloudRows.length">
               <td colspan="10" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูล AP จาก TRCLOUD</td>
             </tr>
-            <tr v-for="r in pager.pagedRows" :key="getRowIdentity(r)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
-              <td class="px-4 py-3 font-medium font-mono break-all" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ formatDocNo(r, 'AP') }}</td>
+            <tr v-for="r in filteredTrcloudRows" :key="getRowIdentity(r)" class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors border-bottom" style="border-bottom: 1px solid var(--color-border)">
+              <td class="px-4 py-3 font-medium font-mono break-all" style="color: #f59e0b; border-right: 1px solid var(--color-border)">{{ r.invoice_number || r.document_number || r.expense_id || '-' }}</td>
               <td class="px-4 py-3" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.issue_date || '-' }}</td>
               <td class="px-4 py-3 font-medium" style="color: #3b82f6; border-right: 1px solid var(--color-border)">{{ calculateDocAge(r.issue_date || r.date) }}</td>
               <td class="px-4 py-3 whitespace-normal break-words" style="color: var(--color-text-primary); border-right: 1px solid var(--color-border)">{{ r.organization || '-' }}</td>
@@ -527,19 +466,6 @@ function getDisplayBadgeInfo(row) {
           </tbody>
         </table>
       </div>
-
-      <TablePager
-        :page="pager.page"
-        :page-size="pager.pageSize"
-        :total="pager.total"
-        :total-pages="pager.totalPages"
-        :start-index="pager.startIndex"
-        :shown="pager.pagedRows.length"
-        @prev="pager.prev()"
-        @next="pager.next()"
-        @go-to="pager.goTo($event)"
-        @update:page-size="pager.setPageSize($event)"
-      />
     </div>
   </div>
 </template>

@@ -1,37 +1,30 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-
-// หน้า Login เท่านั้นที่ import แบบ static — เป็นหน้าแรกที่ทุกคนเห็น ไม่ควรมี round trip เพิ่ม
 import LoginView from '@/views/LoginView.vue'
-
-// ── หน้าอื่นโหลดแบบ lazy (route-level code splitting) ─────────────────────────
-// เดิม import ทุกหน้าแบบ static → โค้ดของทุกหน้า (พร้อม xlsx/jspdf/chart.js ที่หน้านั้น ๆ
-// เรียกใช้) ถูกยัดรวมเป็น bundle ก้อนเดียว ผู้ใช้ต้องรอดาวน์โหลด+parse ทั้งหมด
-// ก่อนเห็นหน้าจอแรก vue-router รับ () => import() ได้ตรง ๆ จึงโหลดเฉพาะหน้าที่เข้าจริง
-const DashboardView = () => import('@/views/DashboardView.vue')
-const ItemListView = () => import('@/views/ItemListView.vue')
-const InventoryImportsView = () => import('@/views/InventoryImportsView.vue')
-const InventoryhistoryLisView = () => import('@/views/InventoryhistoryLisView.vue')
-const OrderListView = () => import('@/views/OrderListView.vue')
-const TransactionsListView = () => import('@/views/TransactionsListView.vue')
-const HistoryListView = () => import('@/views/historyListView.vue')
-const EmployeeLisView = () => import('@/views/EmployeeLisView.vue')
-const SystemusersLisView = () => import('@/views/SystemusersLisView.vue')
-const UserLogsLisView = () => import('@/views/userLogsLisView.vue')
-const ImportMoreListView = () => import('@/views/ImportMoreListView.vue')
-const SummaryDetailView = () => import('@/views/summary_detailView.vue')
-const InspectionView = () => import('@/views/inspectionView.vue')
-const InspectionItemsView = () => import('@/views/inspection_itemsView.vue')
-const HomepageView = () => import('@/views/localState/users/HomepageView.vue')
-const CreateOrderView = () => import('@/views/localState/users/CreateOrderView.vue')
-const CreatePRView = () => import('@/views/localState/users/CreatePRView.vue')
-const HistoryView = () => import('@/views/localState/users/HistoryView.vue')
-const WithdrawFormView = () => import('@/views/localState/users/WithdrawFormView.vue')
-const PrAdminView = () => import('@/views/PrSystem/AdminView.vue')
+import DashboardView from '@/views/DashboardView.vue'
+import ItemListView from '@/views/ItemListView.vue'
+import InventoryImportsView from '@/views/InventoryImportsView.vue'
+import InventoryhistoryLisView from '@/views/InventoryhistoryLisView.vue'
+import OrderListView from '@/views/OrderListView.vue'
+import TransactionsListView from '@/views/TransactionsListView.vue'
+import HistoryListView from '@/views/historyListView.vue'
+import EmployeeLisView from '@/views/EmployeeLisView.vue'
+import SystemusersLisView from '@/views/SystemusersLisView.vue'
+import UserLogsLisView from '@/views/userLogsLisView.vue'
+import ImportMoreListView from '@/views/ImportMoreListView.vue'
+import SummaryDetailView from '@/views/summary_detailView.vue'
+import InspectionView from '@/views/inspectionView.vue'
+import InspectionItemsView from '@/views/inspection_itemsView.vue'
+import HomepageView from '@/views/localState/users/HomepageView.vue'
+import CreateOrderView from '@/views/localState/users/CreateOrderView.vue'
+import CreatePRView from '@/views/localState/users/CreatePRView.vue'
+import HistoryView from '@/views/localState/users/HistoryView.vue'
+import WithdrawFormView from '@/views/localState/users/WithdrawFormView.vue'
+import PrAdminView from '@/views/PrSystem/AdminView.vue'
 // PrSystem Views
-const SystemadminLisView = () => import('@/views/PrSystem/Views/SystemadminLisView.vue')
-const AdminLogsView = () => import('@/views/PrSystem/Views/adminLogsView.vue')
+import SystemadminLisView from '@/views/PrSystem/Views/SystemadminLisView.vue'
+import AdminLogsView from '@/views/PrSystem/Views/adminLogsView.vue'
 // LocalState Views
-const InspectionUser = () => import('@/views/localState/users/inspectionUser.vue')
+import InspectionUser from '@/views/localState/users/inspectionUser.vue'
 
 
 

@@ -1,46 +1,40 @@
 <script setup>
-import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue"
+import { computed, onMounted, ref, watch } from "vue"
 import Swal from "sweetalert2"
 import { useAuthStore } from "@/stores/auth"
 import { useTrcloudStore } from "@/stores/trcloud"
 import AdminSidebar from "./layout/AdminSidebar.vue"
 import AdminHeader from "./layout/AdminHeader.vue"
-
-// ── โหลดหน้าย่อยแบบ lazy (code-splitting) ──────────────────────────────────────
-// เดิม import ทั้ง 30 หน้าแบบ static → รวมเป็น bundle ก้อนเดียว ~2.9MB (gzip ~814KB)
-// ผู้ใช้ต้องดาวน์โหลด+parse โค้ดของทุกหน้าก่อนเห็นหน้าแรก ทั้งที่เปิดดูทีละหน้า
-// defineAsyncComponent + dynamic import → Vite แยกเป็นไฟล์ย่อยต่อหน้า โหลดเมื่อเปิดหน้านั้น
-// (v-if ใน template เลือกหน้าอยู่แล้ว จึงโหลดเฉพาะหน้าที่ถูกเลือกจริง)
-const SystemadminLisView = defineAsyncComponent(() => import("./Views/SystemadminLisView.vue"))
-const AdminLogsView = defineAsyncComponent(() => import("./Views/adminLogsView.vue"))
-const JobStatusView = defineAsyncComponent(() => import("./Views/jobstatusView.vue"))
-const StoreView = defineAsyncComponent(() => import("./Views/storeView.vue"))
-const PurchaseView = defineAsyncComponent(() => import("./Views/purchaseView.vue"))
-const UrgentsView = defineAsyncComponent(() => import("./Views/urgentsView.vue"))
-const TeamView = defineAsyncComponent(() => import("./Views/teamView.vue"))
-const DashboardView = defineAsyncComponent(() => import("./Views/dashboardView.vue"))
-const AppoView = defineAsyncComponent(() => import("./Views/appoView.vue"))
-const TrackingView = defineAsyncComponent(() => import("./Views/trackingView.vue"))
-const SlipView = defineAsyncComponent(() => import("./Views/slipView.vue"))
-const LineView = defineAsyncComponent(() => import("./Views/lineView.vue"))
-const ExpFormView = defineAsyncComponent(() => import("./Views/expFormView.vue"))
-const ExpTrackingView = defineAsyncComponent(() => import("./Views/expTrackingView.vue"))
-const ExpSlipView = defineAsyncComponent(() => import("./Views/expSlipView.vue"))
-const ExpLineView = defineAsyncComponent(() => import("./Views/expLineView.vue"))
-const PrView = defineAsyncComponent(() => import("./Views/prView.vue"))
-const PoView = defineAsyncComponent(() => import("./Views/poView.vue"))
-const ApView = defineAsyncComponent(() => import("./Views/apView.vue"))
-const TrcloudApItemsView = defineAsyncComponent(() => import("./Views/trcloudApItemsView.vue"))
-const TrcloudPoItemsView = defineAsyncComponent(() => import("./Views/trcloudPoItemsView.vue"))
-const TrcloudExpItemsView = defineAsyncComponent(() => import("./Views/expView.vue"))
-const PvView = defineAsyncComponent(() => import("./Views/pvView.vue"))
-const TrcloudDocsView = defineAsyncComponent(() => import("./Views/trcloudDocsView.vue"))
-const PrpoappvView = defineAsyncComponent(() => import("./Views/prpoappvView.vue"))
-const SubmitAmountView = defineAsyncComponent(() => import("./Views/submit_amountView.vue"))
-const NotificationSummaryView = defineAsyncComponent(() => import("./Views/notificationSummaryView.vue"))
-const TankpoView = defineAsyncComponent(() => import("./Views/TankpoView.vue"))
-const PrPurchaseSummaryView = defineAsyncComponent(() => import("./Views/PrPurchaseSummaryView.vue"))
-const UrgentPaymentView = defineAsyncComponent(() => import("./Views/UrgentPaymentView.vue"))
+import SystemadminLisView from "./Views/SystemadminLisView.vue"
+import AdminLogsView from "./Views/adminLogsView.vue"
+import JobStatusView from "./Views/jobstatusView.vue"
+import StoreView from "./Views/storeView.vue"
+import PurchaseView from "./Views/purchaseView.vue"
+import UrgentsView from "./Views/urgentsView.vue"
+import TeamView from "./Views/teamView.vue"
+import DashboardView from "./Views/dashboardView.vue"
+import AppoView from "./Views/appoView.vue"
+import TrackingView from "./Views/trackingView.vue"
+import SlipView from "./Views/slipView.vue"
+import LineView from "./Views/lineView.vue"
+import ExpFormView from "./Views/expFormView.vue"
+import ExpTrackingView from "./Views/expTrackingView.vue"
+import ExpSlipView from "./Views/expSlipView.vue"
+import ExpLineView from "./Views/expLineView.vue"
+import PrView from "./Views/prView.vue"
+import PoView from "./Views/poView.vue"
+import ApView from "./Views/apView.vue"
+import TrcloudApItemsView from "./Views/trcloudApItemsView.vue"
+import TrcloudPoItemsView from "./Views/trcloudPoItemsView.vue"
+import TrcloudExpItemsView from "./Views/expView.vue"
+import PvView from "./Views/pvView.vue"
+import TrcloudDocsView from "./Views/trcloudDocsView.vue"
+import PrpoappvView from "./Views/prpoappvView.vue"
+import SubmitAmountView from "./Views/submit_amountView.vue"
+import NotificationSummaryView from "./Views/notificationSummaryView.vue"
+import TankpoView from "./Views/TankpoView.vue"
+import PrPurchaseSummaryView from "./Views/PrPurchaseSummaryView.vue"
+import UrgentPaymentView from "./Views/UrgentPaymentView.vue"
 
 const auth = useAuthStore()
 const trcloudStore = useTrcloudStore()

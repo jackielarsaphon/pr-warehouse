@@ -12,8 +12,7 @@ permissions:
 
 concurrency:
   group: pages
-  # false = ต่อคิวแทนตัดกลางคัน — กันไม่ให้ run ถูกตัดตอน deploy แล้วทิ้ง Pages deployment ค้าง
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -47,8 +46,9 @@ jobs:
           VITE_DATE_TO: ${{ secrets.VITE_DATE_TO }}
           VITE_REFRESH_SEC: ${{ secrets.VITE_REFRESH_SEC }}
           VITE_BASE_PATH: /pr-warehouse/
-          # ISP ไทยบล็อก *.run.app ที่ระดับ SNI (DPI ยิง RST) — ย้าย proxy มา Deno Deploy (.deno.net เข้าถึงได้)
-          VITE_TRCLOUD_PROXY_BASE: https://pr-warehouse.dwnb1994.deno.net
+          # Override via repo secret VITE_TRCLOUD_PROXY_BASE if the Cloud Run URL ever changes;
+          # default is the deterministic URL for service `trcloud-proxy` in asia-southeast1.
+          VITE_TRCLOUD_PROXY_BASE: ${{ secrets.VITE_TRCLOUD_PROXY_BASE || 'https://trcloud-proxy-ytlwqebtha-as.a.run.app' }}
         run: npm run build
 
       - name: Setup Pages
@@ -69,6 +69,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-        with:
-          # รอ Pages publish นานขึ้น (30 นาที) กัน "Timeout reached" เวลา backend ช้า/คิวยาว
-          timeout: 1800000

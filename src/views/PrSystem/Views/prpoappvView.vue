@@ -3,9 +3,6 @@ import { computed, onMounted, ref } from "vue"
 import { useTrcloudStore } from "@/stores/trcloud"
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
-import { usePagination } from '@/composables/usePagination'
-import { rowSearchBlob } from '@/utils/searchBlob'
-import TablePager from '@/components/TablePager.vue'
 
 const trcloudStore = useTrcloudStore()
 const auth = useAuthStore()
@@ -326,11 +323,8 @@ const relationRows = computed(() => {
 
   const q = filter.value.trim().toLowerCase()
   if (!q) return rows
-  return rows.filter((r) => rowSearchBlob(r).includes(q))
+  return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(q))
 })
-
-// Tier C: ตัดเป็นหน้า ๆ — หน้านี้จับคู่ PR→PO→AP→PV ทุกใบ แถวจึงเยอะและแต่ละแถวหนัก
-const pager = usePagination(relationRows, { storageKey: 'relation' })
 
 function showValues(values) {
   if (!values || !values.length) return "-"
@@ -411,7 +405,7 @@ onMounted(() => {
               <td colspan="8" class="px-4 py-12 text-center" style="color: var(--color-text-muted)">ไม่พบข้อมูลสำหรับตรวจสอบความเชื่อมโยง</td>
             </tr>
             <tr
-              v-for="row in pager.pagedRows"
+              v-for="row in relationRows"
               :key="row.prNo"
               class="dark:hover:bg-gray-200/50 hover:bg-blue-100/50 transition-colors"
               style="border-bottom: 1px solid var(--color-border)"
@@ -465,19 +459,6 @@ onMounted(() => {
           </tbody>
         </table>
       </div>
-
-      <TablePager
-        :page="pager.page"
-        :page-size="pager.pageSize"
-        :total="pager.total"
-        :total-pages="pager.totalPages"
-        :start-index="pager.startIndex"
-        :shown="pager.pagedRows.length"
-        @prev="pager.prev()"
-        @next="pager.next()"
-        @go-to="pager.goTo($event)"
-        @update:page-size="pager.setPageSize($event)"
-      />
     </div>
   </div>
 </template>

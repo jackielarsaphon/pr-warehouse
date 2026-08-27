@@ -10,9 +10,9 @@
 //   3) proxy ทุก request /trcloud-api/* ไปยัง https://thaidrill.trcloud.co/*
 //
 // Environment variables (ตั้งใน Deno Deploy dashboard → Settings → Environment Variables):
-//   TRCLOUD_USERNAME   เช่น  don
-//   TRCLOUD_PASSWORD   เช่น  dw12345
-//   TRCLOUD_DEVICE_ID  เช่น  0e218c475357ad43e7bcc689924d3ce6  (ค่า cookie `trcloud` ของเครื่องที่อนุมัติแล้ว)
+//   TRCLOUD_USERNAME   ผู้ใช้ TRCloud (ดูจาก .env ในเครื่อง)
+//   TRCLOUD_PASSWORD   รหัสผ่าน TRCloud (ดูจาก .env ในเครื่อง)
+//   TRCLOUD_DEVICE_ID  ค่า cookie `trcloud` ของเครื่องที่อนุมัติแล้ว (ดูจาก .env ในเครื่อง)
 // ============================================================================
 
 const BASE_URL = 'https://thaidrill.trcloud.co'
@@ -40,11 +40,9 @@ function readSetCookie(headers: Headers, name: string): string {
 
 /** login TRCloud แล้วคืน cookie header `trcloud=<deviceId>; PHPSESSID=<sessionId>` */
 async function trcloudLogin(): Promise<string> {
-  // trim() กันขยะที่ติดมาตอน paste ค่าใน dashboard (เว้นวรรค/newline ต่อท้าย) —
-  // ถ้าไม่ตัด password จะกลายเป็น "dw12345\n" แล้ว TRCloud ตอบ "wrong"
-  const username = Deno.env.get('TRCLOUD_USERNAME')?.trim()
-  const password = Deno.env.get('TRCLOUD_PASSWORD')?.trim()
-  const deviceId = Deno.env.get('TRCLOUD_DEVICE_ID')?.trim()
+  const username = Deno.env.get('TRCLOUD_USERNAME')
+  const password = Deno.env.get('TRCLOUD_PASSWORD')
+  const deviceId = Deno.env.get('TRCLOUD_DEVICE_ID')
 
   if (!username || !password || !deviceId) {
     throw new Error('ขาด env: TRCLOUD_USERNAME / TRCLOUD_PASSWORD / TRCLOUD_DEVICE_ID')
@@ -110,7 +108,10 @@ function invalidateSession() {
   cacheTime = 0
 }
 
-Deno.serve(async (req: Request) => {
+// Cloud Run injects PORT (default 8080); fall back to 8000 for local/Deno Deploy
+const PORT = Number(Deno.env.get('PORT')) || 8000
+
+Deno.serve({ port: PORT }, async (req: Request) => {
   const url = new URL(req.url)
 
   // CORS preflight
