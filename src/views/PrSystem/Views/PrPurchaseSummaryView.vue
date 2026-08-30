@@ -3,11 +3,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useTrcloudStore } from '@/stores/trcloud'
+import Swal from 'sweetalert2'
 
 const auth = useAuthStore()
 const trcloudStore = useTrcloudStore()
 
 const TABLE = 'pr_purchase_tracking'
+const PURCHASER_TABLE = 'pr_purchasers'
 const UNASSIGNED = 'ยังไม่มอบหมาย'
 
 const loading = computed(() => trcloudStore.loading)
@@ -204,8 +206,9 @@ const purchaserList = computed(() => {
   return list.sort((a, b) => b.count - a.count)
 })
 
-// รายชื่อผู้จัดซื้อสำหรับ dropdown มอบหมาย (รายชื่อคงที่ตามที่กำหนด)
-const PURCHASERS = [
+// รายชื่อผู้จัดซื้อสำหรับ dropdown มอบหมาย — โหลดจากตาราง pr_purchasers (เพิ่มชื่อได้จากหน้าเว็บ)
+// ค่าตั้งต้นด้านล่างใช้เป็น fallback กรณียังไม่ได้รัน sql/2026-08-30_pr_purchasers.sql
+const DEFAULT_PURCHASERS = [
   { code: 'L2304126', name: 'สินทะสอน อินทะวง' },
   { code: 'L26022053', name: 'คำกอง แก้วมะนี' },
   { code: 'L2602022', name: 'พอนวิไลสัก ฟองสานุวง' },
@@ -213,7 +216,9 @@ const PURCHASERS = [
   { code: 'L2606013', name: 'เจียง' },
   { code: 'L2509101', name: 'ลัดสะหมี ลาดสะบันดิด' },
 ]
-const purchaserNames = PURCHASERS.map((p) => p.name)
+const PURCHASERS = ref([...DEFAULT_PURCHASERS])
+const purchasersReady = ref(false)
+const purchaserNames = computed(() => PURCHASERS.value.map((p) => p.name))
 
 const selectedPurchaserData = computed(() => purchaserList.value.find((p) => p.name === selectedPurchaser.value) || null)
 
@@ -228,10 +233,124 @@ const assignedCountByName = computed(() => {
   return m
 })
 
-// แผงข้าง: สรุปผู้จัดซื้อ 6 คน + จำนวน PR ที่มอบหมายแล้ว (เรียงมาก→น้อย)
+// แผงข้าง: สรุปผู้จัดซื้อ + จำนวน PR ที่มอบหมายแล้ว (เรียงมาก→น้อย)
 const purchaserAssignSummary = computed(() =>
-  PURCHASERS.map((p) => ({ ...p, assigned: assignedCountByName.value[p.name] || 0 })).sort((a, b) => b.assigned - a.assigned)
+  PURCHASERS.value.map((p) => ({ ...p, assigned: assignedCountByName.value[p.name] || 0 })).sort((a, b) => b.assigned - a.assigned)
 )
+
+// ─── รายชื่อผู้จัดซื้อ: โหลด / เพิ่ม ─────────────────────────────────────────
+async function loadPurchasers() {
+  try {
+    let { data, error } = await supabase.from(PURCHASER_TABLE).select('*').eq('active', true)
+    if (error) throw error
+
+    // ตารางมีแต่ยังว่าง (เช่นโหมด mock, หรือสร้างตารางโดยไม่ได้รันส่วน insert)
+    // → เขียนรายชื่อตั้งต้นลงไปเลย ไม่งั้นพอเพิ่มคนแรก รายชื่อเดิมจะหายตอน reload
+    if (!data?.length) {
+      const seed = DEFAULT_PURCHASERS.map((x) => ({ ...x, active: true }))
+      const { data: seeded, error: seedErr } = await supabase.from(PURCHASER_TABLE).insert(seed).select()
+      if (seedErr) throw seedErr
+      data = seeded
+    }
+
+    const list = (data || []).map((r) => ({ id: r.id, code: r.code || '', name: r.name || '' })).filter((r) => r.name)
+    if (list.length) PURCHASERS.value = list
+    purchasersReady.value = true
+  } catch (e) {
+    // ยังไม่ได้รัน sql/2026-08-30_pr_purchasers.sql → ใช้รายชื่อตั้งต้นไปก่อน (เพิ่มชื่อจะยังไม่ได้)
+    console.warn('load pr_purchasers failed:', e?.message || e)
+    purchasersReady.value = false
+  }
+}
+
+async function addPurchaser() {
+  const isDark = document.documentElement.classList.contains('dark')
+  const { value: form } = await Swal.fire({
+    title: 'เพิ่มผู้จัดซื้อ',
+    html:
+      '<input id="pc-name" class="swal2-input" placeholder="ชื่อ-นามสกุล" style="margin-inline:0;width:100%">' +
+      '<input id="pc-code" class="swal2-input" placeholder="รหัสพนักงาน (เช่น L2304126)" style="margin-inline:0;width:100%">',
+    focusConfirm: false,
+    showCancelButton: true,
+    confirmButtonText: 'เพิ่ม',
+    cancelButtonText: 'ยกเลิก',
+    confirmButtonColor: '#2563eb',
+    background: isDark ? '#1e293b' : '#fff',
+    color: isDark ? '#fff' : '#000',
+    preConfirm: () => {
+      const name = document.getElementById('pc-name').value.trim()
+      const code = document.getElementById('pc-code').value.trim()
+      if (!name) return Swal.showValidationMessage('กรุณากรอกชื่อ-นามสกุล')
+      if (!code) return Swal.showValidationMessage('กรุณากรอกรหัสพนักงาน')
+      if (PURCHASERS.value.some((p) => p.code === code)) return Swal.showValidationMessage('รหัสพนักงานนี้มีอยู่แล้ว')
+      if (PURCHASERS.value.some((p) => p.name === name)) return Swal.showValidationMessage('ชื่อนี้มีอยู่แล้ว')
+      return { name, code }
+    },
+  })
+  if (!form) return
+
+  try {
+    const created_by = auth.user?.fullname || auth.user?.username || null
+    const { data, error } = await supabase
+      .from(PURCHASER_TABLE)
+      .insert({ code: form.code, name: form.name, active: true, created_by })
+      .select()
+    if (error) throw error
+    const saved = Array.isArray(data) ? data[0] : data
+    PURCHASERS.value = [...PURCHASERS.value, { id: saved?.id, code: form.code, name: form.name }]
+    Swal.fire({
+      icon: 'success',
+      title: 'เพิ่มรายชื่อแล้ว',
+      text: `${form.name} (${form.code})`,
+      timer: 1800,
+      showConfirmButton: false,
+      background: isDark ? '#1e293b' : '#fff',
+      color: isDark ? '#fff' : '#000',
+    })
+  } catch (e) {
+    console.error('❌ เพิ่มผู้จัดซื้อไม่สำเร็จ:', e?.message || e)
+    Swal.fire({
+      icon: 'error',
+      title: 'เพิ่มรายชื่อไม่สำเร็จ',
+      text: purchasersReady.value
+        ? e?.message || 'บันทึกลงฐานข้อมูลไม่ได้'
+        : 'ยังไม่มีตาราง pr_purchasers — รัน sql/2026-08-30_pr_purchasers.sql บน Supabase ก่อน',
+      background: isDark ? '#1e293b' : '#fff',
+      color: isDark ? '#fff' : '#000',
+    })
+  }
+}
+
+// ลบได้เฉพาะคนที่ยังไม่มี PR มอบหมาย — กันประวัติการมอบหมายกำพร้าชื่อ
+async function removePurchaser(p) {
+  const isDark = document.documentElement.classList.contains('dark')
+  const res = await Swal.fire({
+    title: 'ลบรายชื่อ?',
+    text: `${p.name} (${p.code})`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'ลบ',
+    cancelButtonText: 'ยกเลิก',
+    confirmButtonColor: '#dc2626',
+    background: isDark ? '#1e293b' : '#fff',
+    color: isDark ? '#fff' : '#000',
+  })
+  if (!res.isConfirmed) return
+  try {
+    const { error } = await supabase.from(PURCHASER_TABLE).delete().eq('code', p.code)
+    if (error) throw error
+    PURCHASERS.value = PURCHASERS.value.filter((x) => x.code !== p.code)
+  } catch (e) {
+    console.error('❌ ลบผู้จัดซื้อไม่สำเร็จ:', e?.message || e)
+    Swal.fire({
+      icon: 'error',
+      title: 'ลบไม่สำเร็จ',
+      text: e?.message || 'ลบจากฐานข้อมูลไม่ได้',
+      background: isDark ? '#1e293b' : '#fff',
+      color: isDark ? '#fff' : '#000',
+    })
+  }
+}
 
 // คลิกผู้จัดซื้อในแผงข้าง → ดู PR ที่มอบหมายให้คนนั้น (ล้าง cost center เพื่อโชทุก cost center)
 const selectedAssignee = ref(null)
@@ -409,7 +528,7 @@ async function refresh() {
 }
 
 onMounted(async () => {
-  await loadTracking()
+  await Promise.all([loadTracking(), loadPurchasers()])
   if (prRows.value.length === 0) trcloudStore.fetchTrcloudData('pr')
   if (trcloudStore.poItemRows.length === 0) trcloudStore.fetchTrcloudData('po')
 })
@@ -882,14 +1001,23 @@ watch(viewMode, (mode) => {
           <span class="text-[13px] font-semibold" style="color: var(--color-text-primary)">
             <i class="fa-solid fa-user-tag mr-1.5 text-blue-500"></i>ผู้จัดซื้อ (มอบหมาย) ({{ purchaserAssignSummary.length }})
           </span>
-          <span class="text-[10px]" style="color: var(--color-text-muted)">รวมมอบแล้ว {{ totals.assigned }} PR</span>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <span class="text-[10px]" style="color: var(--color-text-muted)">รวมมอบแล้ว {{ totals.assigned }} PR</span>
+            <button
+              @click="addPurchaser"
+              class="px-2 py-1 rounded-md text-[11px] font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors whitespace-nowrap"
+              title="เพิ่มรายชื่อผู้จัดซื้อ"
+            >
+              <i class="fa-solid fa-plus mr-1"></i>เพิ่มรายชื่อ
+            </button>
+          </div>
         </div>
         <div class="flex-1 min-h-0 overflow-auto">
           <div
             v-for="p in purchaserAssignSummary"
             :key="p.code"
             @click="selectAssignee(p.name)"
-            :class="['flex items-center gap-3 px-3 py-3 cursor-pointer transition-all border-b border-l-4', selectedAssignee === p.name ? 'bg-blue-50/60 dark:bg-blue-900/20 border-l-blue-600' : 'border-l-transparent hover:bg-gray-50 dark:hover:bg-gray-800/40']"
+            :class="['group flex items-center gap-3 px-3 py-3 cursor-pointer transition-all border-b border-l-4', selectedAssignee === p.name ? 'bg-blue-50/60 dark:bg-blue-900/20 border-l-blue-600' : 'border-l-transparent hover:bg-gray-50 dark:hover:bg-gray-800/40']"
             style="border-bottom-color: var(--color-border)"
           >
             <div class="w-9 h-9 flex-shrink-0 rounded-full flex items-center justify-center text-[13px] font-bold"
@@ -907,6 +1035,14 @@ watch(viewMode, (mode) => {
             >
               <i class="fa-solid fa-clipboard-check mr-0.5"></i>มอบหมายแล้ว {{ p.assigned }}
             </span>
+            <button
+              v-if="p.assigned === 0"
+              @click.stop="removePurchaser(p)"
+              class="flex-shrink-0 w-6 h-6 rounded opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+              title="ลบรายชื่อ"
+            >
+              <i class="fa-solid fa-trash-can text-[11px]"></i>
+            </button>
           </div>
         </div>
       </aside>
