@@ -1,0 +1,22 @@
+# ใช้: docker compose --env-file /etc/pr-warehouse-proxy.env up -d
+#
+# ทำไม env มาจากไฟล์นอก repo: TRCLOUD_PASSWORD/DEVICE_ID เป็นความลับ
+# ถ้าเขียนไว้ในไฟล์นี้ก็เท่ากับ commit รหัสขึ้น git (เคยเกิดกับ README ตัวเก่า)
+services:
+  proxy:
+    build: .
+    container_name: pr-warehouse-proxy
+    restart: unless-stopped
+    # ผูกกับ loopback เท่านั้น — เข้าถึงได้ผ่าน Caddy ที่มีด่าน login ทางเดียว
+    # ถ้าเปิดเป็น 0.0.0.0 จะยิงตรงข้ามด่านได้จากอินเทอร์เน็ต
+    ports:
+      - "127.0.0.1:8096:8000"
+    environment:
+      TRCLOUD_USERNAME:  ${TRCLOUD_USERNAME}
+      TRCLOUD_PASSWORD:  ${TRCLOUD_PASSWORD}
+      TRCLOUD_DEVICE_ID: ${TRCLOUD_DEVICE_ID}
+    healthcheck:
+      test: ["CMD", "deno", "eval", "await fetch('http://localhost:8000/health')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

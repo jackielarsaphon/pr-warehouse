@@ -189,7 +189,8 @@ export default defineConfig(async ({ mode }) => {
 
   return {
     plugins: [vue()],
-    base: process.env.VITE_BASE_PATH || '/pr-warehouse/',
+    // เว็บอยู่ที่รากของ pr.tdlmc.com แล้ว ไม่ใช่ subpath /pr-warehouse/ ของ GitHub Pages
+    base: process.env.VITE_BASE_PATH || '/',
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))
