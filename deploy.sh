@@ -58,8 +58,22 @@ fi
 
 echo
 echo "════ ส่งขึ้น $HOST:$DEST ════"
-# --delete ล้างไฟล์ build เก่าที่ไม่มีในรอบนี้ (ชื่อไฟล์มี hash ไม่ล้างจะกองไปเรื่อย ๆ)
-rsync -az --delete --info=stats1 dist/ "$HOST:$DEST/" || exit 1
+# ใช้ tar ผ่าน ssh ไม่ใช้ rsync — Git Bash บน Windows ไม่มี rsync มาให้
+#
+# สลับโฟลเดอร์ทีเดียวตอนจบ ไม่แตกทับของเดิม เพราะ:
+#   - ถ้าแตกทับแล้วสายหลุดกลางทาง เว็บจะค้างสภาพครึ่ง ๆ (index ใหม่ + asset เก่า)
+#   - ชื่อไฟล์ asset มี hash ต่อรอบ ถ้าไม่ล้างของเก่าจะกองสะสมไปเรื่อย ๆ
+tar -C dist -czf - . | ssh "$HOST" "bash -s" <<'REMOTE' || exit 1
+set -e
+DEST=/var/www/pr
+rm -rf "$DEST.new" && mkdir -p "$DEST.new"
+tar -C "$DEST.new" -xzf -
+rm -rf "$DEST.old"
+[ -d "$DEST" ] && mv "$DEST" "$DEST.old"
+mv "$DEST.new" "$DEST"
+rm -rf "$DEST.old"
+echo "  วางแล้ว $(find "$DEST" -type f | wc -l) ไฟล์"
+REMOTE
 
 echo
 echo "════ ยืนยันจากภายนอก ════"
