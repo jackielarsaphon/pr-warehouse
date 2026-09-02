@@ -15,6 +15,12 @@
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 
+# 🔴 บน Git Bash / MSYS ค่าที่ขึ้นต้นด้วย "/" จะถูกแปลงเป็นพาธ Windows ก่อนถึง node
+#    VITE_BASE_PATH=/ กลายเป็น C:/Program Files/Git/ แล้ว index.html จะอ้าง
+#    src="/Program Files/Git/assets/..." = เว็บจอขาว (เจอจริง 2 ก.ย. 2026)
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*' 
+
 HOST=tdl@tdlmc.com
 DEST=/var/www/pr
 ALLOW_DIRTY=0
@@ -51,11 +57,17 @@ npm run build || exit 1
 [ -f dist/index.html ] || { echo "  ✗ ไม่มี dist/index.html — build ไม่ได้ผลลัพธ์"; exit 1; }
 echo "  ได้ $(find dist -type f | wc -l) ไฟล์ · $(du -sh dist | cut -f1)"
 
-# กันพลาดที่เจอง่าย: ถ้า base path ผิด index.html จะอ้าง /pr-warehouse/assets/...
-if grep -q '/pr-warehouse/' dist/index.html; then
-  echo "  ✗ dist ยังอ้าง /pr-warehouse/ — VITE_BASE_PATH ไม่ถูกใช้ หยุดก่อนจะได้เว็บจอขาว"
+# ── ด่านตรวจ base path ────────────────────────────────────────────────────
+# ตรวจว่า "ถูก" ไม่ใช่แค่ตรวจว่า "ไม่ใช่ค่าที่เคยผิด" — ค่าผิดมีได้หลายหน้าตา
+# (เคยเจอสองแบบ: /pr-warehouse/ ค้างจาก GitHub Pages · /Program Files/Git/ จาก MSYS)
+REF="$(grep -oE '(src|href)="[^"]*/assets/[^"]*"' dist/index.html | head -1)"
+if ! printf '%s' "$REF" | grep -qE '="/assets/'; then
+  echo "  ✗ index.html อ้าง asset ผิดที่: $REF"
+  echo "     ต้องเป็น /assets/... — VITE_BASE_PATH ไม่ได้ถูกใช้ตามที่ตั้ง"
+  echo "     หยุดก่อน ไม่งั้นได้เว็บจอขาว"
   exit 1
 fi
+echo "  ✓ asset อ้างถูกที่ ($REF)"
 
 echo
 echo "════ ส่งขึ้น $HOST:$DEST ════"
