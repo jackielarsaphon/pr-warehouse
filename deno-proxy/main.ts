@@ -18,8 +18,11 @@
 const BASE_URL = 'https://thaidrill.trcloud.co'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
+/** เดิมเปิด '*' เพราะหน้าเว็บอยู่ GitHub Pages คนละโดเมนกับ proxy
+ *  ตอนนี้อยู่โฮสต์เดียวกัน (pr.tdlmc.com เสิร์ฟทั้งหน้าเว็บและ /trc) จึงไม่ต้องเปิดข้ามโดเมน
+ *  ปิดไว้แล้วเว็บอื่นจะเอา proxy นี้ไปใช้ผ่านเบราว์เซอร์ของผู้ใช้ไม่ได้ */
 const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': 'https://pr.tdlmc.com',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Requested-With, X-TRCloud-Cookie',
 }
@@ -28,6 +31,26 @@ const CORS_HEADERS: Record<string, string> = {
 let cachedCookie = ''
 let cacheTime = 0
 const SESSION_TTL_MS = 20 * 60 * 1000 // 20 นาที
+
+/** endpoint ของ TRCloud ที่หน้าเว็บนี้เรียกจริง — นอกรายการนี้ปฏิเสธทั้งหมด
+ *
+ *  ทำไมต้องมี allowlist: หน้าเว็บ pr.tdlmc.com เปิดสาธารณะ (ล็อกอินเป็นของแอปเอง
+ *  ที่ทำฝั่งเบราว์เซอร์) ⇒ ใครก็ยิง /trc/* ได้ ถ้าไม่จำกัด proxy ตัวนี้จะกลายเป็น
+ *  ประตูเข้า TRCloud แบบทั่วไปที่ใช้สิทธิ์บัญชีเรา ทำได้ทุกอย่างที่บัญชีนั้นทำได้
+ *  จำกัดไว้ 8 ตัวนี้แล้ว สิ่งที่ทำได้เหลือแค่ "อ่านรายการ" ที่หน้าเว็บแสดงอยู่แล้ว
+ *
+ *  ถอดมาจาก src/stores/trcloud.js (candidateEndpoints ทุกสาขา) — ถ้าเพิ่มหน้าใหม่
+ *  ที่เรียก endpoint อื่น ต้องมาเติมที่นี่ ไม่งั้นจะได้ 403 แล้วหาสาเหตุไม่เจอ */
+const ALLOWED_PATHS = new Set([
+  'application/expense/api/engine-expense/expense_search_keyword.php',
+  'application/expense/api/engine-po/po_search_keyword.php',
+  'application/expense/api/engine-pr/pr_search_keyword.php',
+  'application/expense_report/api/engine-po/po_list.php',
+  'application/expense_report/api/engine-report/invoice_by_supplier.php',
+  'application/expense_report/api/engine-report/invoice_list.php',
+  'application/finance/api/engine-payment/payment_list.php',
+  'application/finance/api/engine-payment/payment_search_keyword.php',
+])
 
 /** อ่านค่า cookie หนึ่งตัวจาก Set-Cookie header */
 function readSetCookie(headers: Headers, name: string): string {
@@ -136,6 +159,16 @@ Deno.serve(async (req: Request) => {
     trcloudPath = url.pathname.replace(/^\/trcloud-api\//, '') + url.search
   } else {
     return new Response('Not found', { status: 404, headers: CORS_HEADERS })
+  }
+
+  // เทียบกับ allowlist โดยตัด query string ออกก่อน (ทาง /trcloud-api ต่อ query มาด้วย)
+  const pathOnly = trcloudPath.split('?')[0]
+  if (!ALLOWED_PATHS.has(pathOnly)) {
+    console.warn(`[trcloud-proxy] ปฏิเสธ endpoint นอกรายการ: ${pathOnly}`)
+    return new Response(JSON.stringify({ error: 'endpoint not allowed' }), {
+      status: 403,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    })
   }
 
   try {
