@@ -1,9 +1,0 @@
-<script setup>
-import { RouterView } from 'vue-router'
-import ToastMessage from '@/components/ui/ToastMessage.vue'
-</script>
-
-<template>
-  <RouterView />
-  <ToastMessage />
-</template>

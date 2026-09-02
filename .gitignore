@@ -38,3 +38,7 @@ backups/
 # Project specific
 TableStuctureSupabase.txt
 # (Optional: If you want to keep TableStuctureSupabase.txt on GitHub, remove the line above)
+
+# worktree/เศษไฟล์ของ Claude Code — เคยหลุดเข้า repo ไป 93 ไฟล์
+# ในนั้นมี Ex.txt ที่มี cookie TRCloud สด (PHPSESSID + trcloud) ห้ามให้เข้ามาอีก
+.claude/

@@ -11,8 +11,8 @@
 //
 // Environment variables (ตั้งใน Deno Deploy dashboard → Settings → Environment Variables):
 //   TRCLOUD_USERNAME   เช่น  don
-//   TRCLOUD_PASSWORD   เช่น  dw12345
-//   TRCLOUD_DEVICE_ID  เช่น  0e218c475357ad43e7bcc689924d3ce6  (ค่า cookie `trcloud` ของเครื่องที่อนุมัติแล้ว)
+//   TRCLOUD_PASSWORD   รหัสผ่าน TRCloud (อย่าเขียนค่าจริงลงไฟล์นี้)
+//   TRCLOUD_DEVICE_ID  ค่า cookie `trcloud` ของเครื่องที่ TRCloud อนุมัติแล้ว
 // ============================================================================
 
 const BASE_URL = 'https://thaidrill.trcloud.co'
@@ -41,7 +41,7 @@ function readSetCookie(headers: Headers, name: string): string {
 /** login TRCloud แล้วคืน cookie header `trcloud=<deviceId>; PHPSESSID=<sessionId>` */
 async function trcloudLogin(): Promise<string> {
   // trim() กันขยะที่ติดมาตอน paste ค่าใน dashboard (เว้นวรรค/newline ต่อท้าย) —
-  // ถ้าไม่ตัด password จะกลายเป็น "dw12345\n" แล้ว TRCloud ตอบ "wrong"
+  // ถ้าไม่ตัด password จะกลายเป็น "<password>\n" แล้ว TRCloud ตอบ "wrong"
   const username = Deno.env.get('TRCLOUD_USERNAME')?.trim()
   const password = Deno.env.get('TRCLOUD_PASSWORD')?.trim()
   const deviceId = Deno.env.get('TRCLOUD_DEVICE_ID')?.trim()
