@@ -95,9 +95,11 @@ REMOTE
 echo
 echo "════ ยืนยันจากภายนอก ════"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://pr.tdlmc.com/ 2>/dev/null)"
+# ไม่มีด่าน login ที่ระดับ Caddy โดยเจตนา (ถอดออก 2 ก.ย. 2026) — แอปมีล็อกอินของตัวเอง
+# ที่ตาราง system_users ⇒ 200 คือค่าที่ถูกต้อง ไม่ใช่ความผิดพลาด
 case "$CODE" in
-  302|303) echo "  ✓ ตอบ $CODE = เด้งไปหน้า login ตามที่ตั้งไว้" ;;
-  200)     echo "  ⚠️  ตอบ 200 = เข้าได้โดยไม่ต้องล็อกอิน — ตรวจ forward_auth ใน Caddyfile" ;;
+  200)     echo "  ✓ ตอบ 200 = เสิร์ฟหน้าเว็บได้ (ล็อกอินเป็นของแอปเอง ไม่ใช่ของ Caddy)" ;;
+  302|303) echo "  ⚠️  ตอบ $CODE = มีด่านมาครอบอยู่ ตรวจ forward_auth ใน Caddyfile" ;;
   000)     echo "  ⚠️  ต่อไม่ติด — DNS ของ pr.tdlmc.com ขึ้นแล้วหรือยัง / Caddy มีบล็อกนี้แล้วหรือยัง" ;;
   *)       echo "  ⚠️  ตอบ $CODE" ;;
 esac
