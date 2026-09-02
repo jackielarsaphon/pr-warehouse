@@ -9,6 +9,7 @@
 #   - proxy เดิมอยู่ *.deno.net ซึ่งอยู่ใน class โดเมนที่ DPI ปลายทางบล็อกเป็นชุด
 #   - อยู่โดเมนตัวเองแล้วได้ด่าน login ของ acct-auth ครอบให้ด้วย
 #
+# ต้องมี: node + npm ในเครื่อง · ssh เข้า tdlmc.com ได้ (ดู ~/.ssh/config)
 # ใช้: ./deploy.sh [--allow-dirty]
 # ============================================================================
 set -uo pipefail
@@ -60,26 +61,31 @@ echo
 echo "════ ส่งขึ้น $HOST:$DEST ════"
 # ใช้ tar ผ่าน ssh ไม่ใช้ rsync — Git Bash บน Windows ไม่มี rsync มาให้
 #
-# สลับโฟลเดอร์ทีเดียวตอนจบ ไม่แตกทับของเดิม เพราะ:
-#   - ถ้าแตกทับแล้วสายหลุดกลางทาง เว็บจะค้างสภาพครึ่ง ๆ (index ใหม่ + asset เก่า)
-#   - ชื่อไฟล์ asset มี hash ต่อรอบ ถ้าไม่ล้างของเก่าจะกองสะสมไปเรื่อย ๆ
-tar -C dist -czf - . | ssh "$HOST" "bash -s" <<'REMOTE' || exit 1
+# แยกเป็นสองขั้น เพราะ ssh อ่านได้จาก stdin ทางเดียว: ขั้นแรกให้ stdin เป็น
+# ข้อมูล tar ขั้นสองจึงส่งสคริปต์ (ถ้ารวมกัน heredoc จะแย่ง stdin ไปจาก tar)
+#
+# พักไฟล์ใน home ก่อน: /var/www เป็นของ root ผู้ใช้ tdl สร้างโฟลเดอร์ข้าง ๆ ไม่ได้
+tar -C dist -czf - . | ssh "$HOST" \
+  'rm -rf ~/.pr-deploy-stage && mkdir -p ~/.pr-deploy-stage && tar -C ~/.pr-deploy-stage -xzf -' \
+  || { echo "  ✗ ส่งไฟล์ไม่สำเร็จ — ของเดิมยังอยู่ครบ ไม่ได้แตะ"; exit 1; }
+
+ssh "$HOST" 'bash -s' <<'REMOTE' || exit 1
 set -e
 DEST=/var/www/pr
-rm -rf "$DEST.new" && mkdir -p "$DEST.new"
-tar -C "$DEST.new" -xzf -
-rm -rf "$DEST.old"
-[ -d "$DEST" ] && mv "$DEST" "$DEST.old"
-mv "$DEST.new" "$DEST"
-rm -rf "$DEST.old"
-echo "  วางแล้ว $(find "$DEST" -type f | wc -l) ไฟล์"
+STAGE=$HOME/.pr-deploy-stage
+[ -f "$STAGE/index.html" ] || { echo "  ✗ ของที่ส่งมาไม่มี index.html — ไม่แตะของเดิม"; exit 1; }
+# --delete ล้าง asset รอบเก่า (ชื่อไฟล์มี hash ต่อรอบ ไม่ล้างจะกองสะสม)
+sudo -n rsync -a --delete "$STAGE/" "$DEST/"
+rm -rf "$STAGE"
+echo "  วางแล้ว $(find "$DEST" -type f | wc -l) ไฟล์ · $(du -sh "$DEST" | cut -f1)"
 REMOTE
 
 echo
 echo "════ ยืนยันจากภายนอก ════"
-CODE="$(curl -s -o /dev/null -w '%{http_code}' https://pr.tdlmc.com/)"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://pr.tdlmc.com/ 2>/dev/null)"
 case "$CODE" in
-  200) echo "  ✓ pr.tdlmc.com ตอบ 200 (เข้าได้โดยไม่ต้องล็อกอิน — ตรวจด่านด้วย)" ;;
   302|303) echo "  ✓ ตอบ $CODE = เด้งไปหน้า login ตามที่ตั้งไว้" ;;
-  *) echo "  ⚠️  ตอบ $CODE" ;;
+  200)     echo "  ⚠️  ตอบ 200 = เข้าได้โดยไม่ต้องล็อกอิน — ตรวจ forward_auth ใน Caddyfile" ;;
+  000)     echo "  ⚠️  ต่อไม่ติด — DNS ของ pr.tdlmc.com ขึ้นแล้วหรือยัง / Caddy มีบล็อกนี้แล้วหรือยัง" ;;
+  *)       echo "  ⚠️  ตอบ $CODE" ;;
 esac
