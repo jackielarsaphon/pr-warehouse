@@ -6,7 +6,10 @@ import { supabase } from '@/lib/supabase'
 import bcrypt from 'bcryptjs'
 
 const props = defineProps({
-  show: Boolean
+  show: Boolean,
+  // เปิดมาพร้อมช่องเปลี่ยนรหัสกางอยู่แล้ว — ใช้กับเมนู "เปลี่ยนรหัสผ่าน" ที่กดตรงเข้ามา
+  // ไม่ต้องให้ผู้ใช้ไล่หาปุ่ม "แก้ไขรหัสผ่าน?" ที่ซ่อนอยู่ท้ายฟอร์มโปรไฟล์
+  openPassword: Boolean
 })
 
 const emit = defineEmits(['close', 'updated'])
@@ -52,7 +55,11 @@ function initForm() {
 }
 
 watch(() => props.show, (newVal) => {
-  if (newVal) initForm()
+  if (newVal) {
+    initForm()
+    // initForm() รีเซ็ต showPasswordFields เป็น false เสมอ จึงต้องตั้งค่าหลังมัน
+    if (props.openPassword) showPasswordFields.value = true
+  }
 })
 
 onMounted(() => {

@@ -47,6 +47,7 @@ const now = ref(new Date())
 const isCompact = ref(window.matchMedia("(max-width: 640px)").matches)
 const switchOpen = ref(false)
 const showEditProfile = ref(false)
+const openPasswordDirect = ref(false)
 const notificationReadMap = ref({})
 const NOTIFICATION_READ_STORAGE_KEY = "mw-prsystem-notification-read-map-v1"
 const weeklyExpandState = ref({ PR: false, PO: false, AP: false })
@@ -271,6 +272,17 @@ function openEditProfile() {
   notificationsOpen.value = false
   switchOpen.value = false
   menuOpen.value = false
+  openPasswordDirect.value = false
+  showEditProfile.value = true
+}
+
+// เปิดฟอร์มโปรไฟล์พร้อมกางช่องเปลี่ยนรหัสให้เลย
+// (ของเดิมต้องกด "แก้ไขข้อมูลโปรไฟล์" แล้วเลื่อนไปหาปุ่ม "แก้ไขรหัสผ่าน?" อีกที)
+function openChangePassword() {
+  notificationsOpen.value = false
+  switchOpen.value = false
+  menuOpen.value = false
+  openPasswordDirect.value = true
   showEditProfile.value = true
 }
 
@@ -634,6 +646,18 @@ onBeforeUnmount(() => {
               แก้ไขข้อมูลโปรไฟล์
             </button>
 
+            <button
+              type="button"
+              class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[13px] font-medium transition-colors hover:bg-gray-50 dark:hover:bg-gray-900/40 text-left"
+              style="color: var(--color-text-secondary)"
+              @click="openChangePassword"
+            >
+              <div class="w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center">
+                <i class="fa-solid fa-key text-amber-600 dark:text-amber-300"></i>
+              </div>
+              เปลี่ยนรหัสผ่าน
+            </button>
+
             <div v-if="props.user.role === 'super_admin'">
               <button
                 type="button"
@@ -690,7 +714,8 @@ onBeforeUnmount(() => {
 
     <ProfileEditSidebar
       :show="showEditProfile"
-      @close="showEditProfile = false"
+      :open-password="openPasswordDirect"
+      @close="showEditProfile = false; openPasswordDirect = false"
     />
   </header>
 </template>
