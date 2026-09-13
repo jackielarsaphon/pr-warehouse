@@ -592,11 +592,20 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   // ── ดึงจาก TRCloud (proxy) ช่วง [from,to] → คืน rows (normalize แล้ว) ────────
   async function pullTypeFromProxy(type, from, to) {
     const companyId = (import.meta.env.VITE_TRCLOUD_COMPANY_ID || '25').trim()
-    const passkey = (import.meta.env.VITE_TRCLOUD_PASSKEY || '6a05946b357765415b4c931d2122a8c8').trim()
-    if (!companyId || !passkey) {
+    if (!companyId) {
       console.error('TRCLOUD API Credentials missing!')
       return []
     }
+
+    // 🔴 passkey ไม่อยู่ฝั่งเบราว์เซอร์อีกต่อไป — proxy เป็นคนใส่ให้จาก env ของเซิร์ฟเวอร์
+    //    เดิมอ่านจาก import.meta.env.VITE_TRCLOUD_PASSKEY และมีค่าจริงเป็น fallback ในซอร์ส
+    //    ตัวแปร VITE_* ถูก Vite **แทนค่าลงไปตอน build** ⇒ ค่าจริงติดไปกับไฟล์ JS ที่ส่งให้เบราว์เซอร์
+    //    (ตรวจ 13 ก.ย. 2026: เจอค่าจริงในไฟล์ที่ /var/www/pr/assets/ ซึ่งให้บริการอยู่จริง
+    //     และอยู่ใน repo สาธารณะบน GitHub ตั้งแต่ commit c96e639 วันที่ 9 พ.ค. 2026)
+    //    ⇒ ลบแค่ค่า fallback ไม่พอ ต้องไม่ส่งจาก client เลย
+    //    เหลือไว้เฉพาะตอน dev ที่ยิงผ่าน vite dev proxy (ไม่มี deno proxy คอยใส่ให้)
+    //    ห้ามตั้งค่านี้ใน .env ที่ใช้ build ขึ้น production
+    const devPasskey = (import.meta.env.VITE_TRCLOUD_PASSKEY || '').trim()
 
     let endpoint = ''
     let docType = 'project'
@@ -657,7 +666,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
       while (true) {
         let finalPayload = {
           company_id: companyId,
-          passkey: passkey,
+          ...(devPasskey ? { passkey: devPasskey } : {}),
           start: page,
           keyword: '',
           filter: '',
@@ -701,7 +710,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         if (type === 'ap' && String(selectedEndpoint || '').toLowerCase().includes('invoice_list.php')) {
           finalPayload = {
             company_id: companyId,
-            passkey: passkey,
+            ...(devPasskey ? { passkey: devPasskey } : {}),
             from: from,
             to: to,
             date_type: 'issue_date',
@@ -721,7 +730,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         if (type === 'po' && String(selectedEndpoint || '').toLowerCase().includes('po_list.php')) {
           finalPayload = {
             company_id: companyId,
-            passkey: passkey,
+            ...(devPasskey ? { passkey: devPasskey } : {}),
             from: from,
             to: to,
             status_new: 1,
@@ -746,7 +755,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
         if (type === 'pv' && (String(selectedEndpoint || '').toLowerCase().includes('payment_list.php') || String(selectedEndpoint || '').toLowerCase().includes('payment_search_keyword.php'))) {
           finalPayload = {
             company_id: companyId,
-            passkey: passkey,
+            ...(devPasskey ? { passkey: devPasskey } : {}),
             from: from,
             to: to,
             date_type: 'issue_date',

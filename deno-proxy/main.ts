@@ -176,7 +176,38 @@ Deno.serve(async (req: Request) => {
 
     // ใช้ cookie จาก client ถ้ามี ไม่งั้น auto-login
     const clientCookie = (req.headers.get('x-trcloud-cookie') || '').trim()
-    const rawBody = req.method === 'POST' ? await req.arrayBuffer() : undefined
+    let rawBody = req.method === 'POST' ? await req.arrayBuffer() : undefined
+
+    // ── ใส่ passkey ที่ฝั่งเซิร์ฟเวอร์ ──────────────────────────────────────
+    // 🔴 ทำไม: เดิม client เป็นคนใส่ passkey ลง body เอง โดยอ่านจาก
+    //    import.meta.env.VITE_TRCLOUD_PASSKEY ซึ่ง Vite **แทนค่าจริงลงไปตอน build**
+    //    ⇒ passkey ติดไปกับไฟล์ JS ที่ส่งให้เบราว์เซอร์ ใครเปิดเว็บก็โหลดไปอ่านได้
+    //    (ตรวจ 13 ก.ย. 2026: เจอค่าจริงใน /var/www/pr/assets/*.js ที่ให้บริการอยู่
+    //     และอยู่ใน repo สาธารณะบน GitHub มาตั้งแต่ commit c96e639 วันที่ 9 พ.ค. 2026)
+    //    ตัวแปรที่ขึ้นต้น VITE_ ทุกตัวเป็นของสาธารณะโดยธรรมชาติ ⇒ ลบแค่ค่า fallback
+    //    ในซอร์สไม่พอ ต้องย้ายมาใส่ที่นี่แทน
+    //
+    // client ส่งเป็น application/x-www-form-urlencoded เสมอ 2 รูปแบบ:
+    //    (ก) ฟิลด์ตรง ๆ            → passkey=<ค่า>&company_id=...
+    //    (ข) ห่อไว้ในฟิลด์ json    → json={"passkey":"<ค่า>",...}
+    // ถ้าแกะไม่ได้ ให้ส่งต่อของเดิมไปเลย ไม่ทำให้ sync พังเพราะเรื่องนี้
+    const serverPasskey = (Deno.env.get('TRCLOUD_PASSKEY') || '').trim()
+    if (serverPasskey && rawBody && rawBody.byteLength > 0) {
+      try {
+        const params = new URLSearchParams(new TextDecoder().decode(rawBody))
+        const jsonField = params.get('json')
+        if (jsonField !== null) {
+          const obj = JSON.parse(jsonField)
+          obj.passkey = serverPasskey
+          params.set('json', JSON.stringify(obj))
+        } else {
+          params.set('passkey', serverPasskey)
+        }
+        rawBody = new TextEncoder().encode(params.toString()).buffer as ArrayBuffer
+      } catch (e) {
+        console.warn('[trcloud-proxy] ใส่ passkey ไม่สำเร็จ ส่ง body เดิมต่อ:', String(e).slice(0, 120))
+      }
+    }
 
     async function callTrcloud(cookie: string): Promise<{ status: number; text: string; contentType: string }> {
       const controller = new AbortController()

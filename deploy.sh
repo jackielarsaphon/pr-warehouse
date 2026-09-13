@@ -30,7 +30,11 @@ ALLOW_DIRTY=0
 # ไม่ใช่ความลับ (เป็นแค่ที่อยู่) จึงเขียนไว้ตรงนี้ได้ ค่าลับอื่นมาจาก .env
 export VITE_BASE_PATH=/
 export VITE_TRCLOUD_PROXY_BASE=https://pr.tdlmc.com/trc
-export VITE_USE_MOCK_DB=false   # mock = localStorage ต่อ browser ไม่แชร์ข้าม user
+export VITE_USE_MOCK_DB=false
+# 🔴 passkey ต้องไม่ติดไปกับ bundle — proxy บนเซิร์ฟเวอร์เป็นคนใส่ให้ (TRCLOUD_PASSKEY ใน
+#    /etc/pr-warehouse-proxy.env) · ตัวแปรที่ขึ้นต้น VITE_ ถูก Vite แทนค่าจริงลงไปตอน build
+#    ถ้าไม่ล้างตรงนี้ ค่าใน .env ของเครื่องจะถูกฝังลงไฟล์ JS ที่ทุกคนโหลดได้
+export VITE_TRCLOUD_PASSKEY=   # mock = localStorage ต่อ browser ไม่แชร์ข้าม user
 
 echo "════ ตรวจก่อน build ════"
 DIRTY="$(git status --porcelain)"
@@ -68,6 +72,19 @@ if ! printf '%s' "$REF" | grep -qE '="/assets/'; then
   exit 1
 fi
 echo "  ✓ asset อ้างถูกที่ ($REF)"
+
+# ── ด่าน: ห้ามมีความลับติดไปกับ bundle ─────────────────────────────────
+# เคยเกิดจริง: passkey ของ TRCloud ถูก Vite แทนค่าลงไฟล์ JS แล้ว deploy ขึ้นเว็บ
+# ใครเปิด pr.tdlmc.com ก็โหลดไฟล์นั้นไปอ่านค่าได้ (และค้างอยู่แบบนั้นหลายเดือน)
+# ด่านนี้จับ hex 32 ตัวที่หน้าตาเหมือน passkey — ถ้าเจอให้หยุด ไม่ต้อง deploy
+LEAK="$(grep -rhoE '[0-9a-f]{32}' dist/assets/*.js 2>/dev/null | sort -u | head -5)"
+if [ -n "$LEAK" ]; then
+  echo "  ✗ เจอค่าที่หน้าตาเหมือนความลับใน bundle — ไม่ deploy"
+  echo "$LEAK" | while read -r h; do echo "      sha256(ค่าที่เจอ) = $(printf %s "$h" | sha256sum | cut -c1-16)"; done
+  echo "     ตรวจว่า VITE_* ตัวไหนหลุดเข้าไป แล้วย้ายไปฝั่งเซิร์ฟเวอร์"
+  exit 1
+fi
+echo "  ✓ ไม่มีความลับติดใน bundle"
 
 echo
 echo "════ ส่งขึ้น $HOST:$DEST ════"

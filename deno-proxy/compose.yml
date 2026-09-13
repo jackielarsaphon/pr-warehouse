@@ -15,6 +15,8 @@ services:
       TRCLOUD_USERNAME:  ${TRCLOUD_USERNAME}
       TRCLOUD_PASSWORD:  ${TRCLOUD_PASSWORD}
       TRCLOUD_DEVICE_ID: ${TRCLOUD_DEVICE_ID}
+      # passkey ย้ายมาจากฝั่ง client — เดิมติดไปกับ bundle ที่เบราว์เซอร์โหลดอ่านได้
+      TRCLOUD_PASSKEY:   ${TRCLOUD_PASSKEY}
     healthcheck:
       test: ["CMD", "deno", "eval", "await fetch('http://localhost:8000/health')"]
       interval: 60s
