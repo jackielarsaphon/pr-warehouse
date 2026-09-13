@@ -802,8 +802,14 @@ export const useTrcloudStore = defineStore('trcloud', () => {
             console.warn(`⚠️ Partial fetch for ${type}:`, res.message)
             break
           }
-          console.error(`❌ API Error for ${type}:`, res.message || 'Unknown Error')
-          break
+          // 🔴 เดิมแค่ console.error แล้ว break ⇒ ฟังก์ชันคืน [] เหมือน "ไม่มีข้อมูล"
+          //    ตัวเรียกแยกไม่ออกระหว่าง "ดึงมาแล้วว่างจริง" กับ "ถูกปฏิเสธ"
+          //    แล้วยังบันทึก sync_state ว่าสำเร็จ ⇒ ซิงก์ตายเงียบ 5 วันโดยไม่มีใครรู้
+          //    (8-13 ก.ย. 2026: TRCloud ตอบ "User and Passkey are mismatched!" ทุกครั้ง
+          //     เพราะ proxy ยังไม่ได้สลับห้องหลังเปลี่ยนบัญชี แต่หน้าเว็บไม่มีสัญญาณอะไรเลย)
+          const apiMsg = res.message || 'Unknown Error'
+          console.error(`❌ API Error for ${type}:`, apiMsg)
+          throw new Error(`TRCloud ปฏิเสธคำขอ (${type}): ${apiMsg}`)
         }
 
         if (endpointTotal === null) endpointTotal = parseInt(res.count || res.total || 0)
@@ -915,14 +921,22 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   }
 
   async function syncRange(from, to, { label = '' } = {}) {
+    // คืนผลจริงออกไป เพื่อให้ตัวเรียกตัดสินใจได้ว่าจะบันทึกว่า "สำเร็จ" ไหม
+    const failed = []
+    let rowsTotal = 0
     for (const type of ALL_TYPES) {
       syncMessage.value = `${label}${type.toUpperCase()}…`
       try {
-        await syncType(type, from, to)
+        rowsTotal += (await syncType(type, from, to)) || 0
       } catch (err) {
         console.error(`sync ${type} ล้มเหลว:`, err)
+        failed.push(`${type}: ${err?.message || err}`)
       }
     }
+    if (failed.length) {
+      syncMessage.value = `⚠️ ดึงไม่สำเร็จ ${failed.length}/${ALL_TYPES.length} ชนิด — ${failed[0]}`
+    }
+    return { failed, rowsTotal }
   }
 
   // backfill ทั้งปีปัจจุบัน (ครั้งแรก หรือกดเอง)
@@ -934,7 +948,13 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     const from = yearStartYmd()
     const to = todayYmd()
     try {
-      await syncRange(from, to, { label: 'ดึงทั้งปี · ' })
+      const _r = await syncRange(from, to, { label: 'ดึงทั้งปี · ' })
+      // 🔴 ห้ามบันทึกว่าสำเร็จถ้าทุกชนิดถูกปฏิเสธ — เดิมบันทึกทุกครั้ง
+      //    ทำให้ sync_state โชว์ว่ารันวันนี้ ทั้งที่ไม่มีเอกสารเข้าเลยมา 5 วัน
+      if (_r && _r.failed && _r.failed.length === ALL_TYPES.length) {
+        console.error('sync ล้มทุกชนิด — ไม่บันทึกสถานะ', _r.failed)
+        return
+      }
       await setSyncState({
         last_full_backfill: nowIso,
         last_incremental_at: nowIso,
@@ -959,7 +979,13 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     const from = incrementalFromYmd()
     const to = todayYmd()
     try {
-      await syncRange(from, to, { label: 'อัพเดทล่าสุด · ' })
+      const _r = await syncRange(from, to, { label: 'อัพเดทล่าสุด · ' })
+      // 🔴 ห้ามบันทึกว่าสำเร็จถ้าทุกชนิดถูกปฏิเสธ — เดิมบันทึกทุกครั้ง
+      //    ทำให้ sync_state โชว์ว่ารันวันนี้ ทั้งที่ไม่มีเอกสารเข้าเลยมา 5 วัน
+      if (_r && _r.failed && _r.failed.length === ALL_TYPES.length) {
+        console.error('sync ล้มทุกชนิด — ไม่บันทึกสถานะ', _r.failed)
+        return
+      }
       await setSyncState({ last_incremental_at: new Date().toISOString() })
       await refreshSyncState()
     } finally {
@@ -979,7 +1005,13 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     const from = quickFromYmd()
     const to = todayYmd()
     try {
-      await syncRange(from, to, { label: 'ดึงเร็ว · ' })
+      const _r = await syncRange(from, to, { label: 'ดึงเร็ว · ' })
+      // 🔴 ห้ามบันทึกว่าสำเร็จถ้าทุกชนิดถูกปฏิเสธ — เดิมบันทึกทุกครั้ง
+      //    ทำให้ sync_state โชว์ว่ารันวันนี้ ทั้งที่ไม่มีเอกสารเข้าเลยมา 5 วัน
+      if (_r && _r.failed && _r.failed.length === ALL_TYPES.length) {
+        console.error('sync ล้มทุกชนิด — ไม่บันทึกสถานะ', _r.failed)
+        return
+      }
       await setSyncState({ last_incremental_at: new Date().toISOString() })
       await refreshSyncState()
     } finally {

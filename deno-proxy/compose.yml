@@ -17,6 +17,9 @@ services:
       TRCLOUD_DEVICE_ID: ${TRCLOUD_DEVICE_ID}
       # passkey ย้ายมาจากฝั่ง client — เดิมติดไปกับ bundle ที่เบราว์เซอร์โหลดอ่านได้
       TRCLOUD_PASSKEY:   ${TRCLOUD_PASSKEY}
+      # passkey ของ 'ห้องต้นทาง' ใช้ตอนสลับห้อง — คนละตัวกับ TRCLOUD_PASSKEY ที่ใช้ยิง API
+      TRCLOUD_ORIGIN_PASSKEY: ${TRCLOUD_ORIGIN_PASSKEY}
+      TRCLOUD_COMPANY_ID:     ${TRCLOUD_COMPANY_ID:-25}
     healthcheck:
       test: ["CMD", "deno", "eval", "await fetch('http://localhost:8000/health')"]
       interval: 60s

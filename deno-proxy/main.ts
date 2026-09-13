@@ -116,6 +116,55 @@ async function trcloudLogin(): Promise<string> {
   }
 
   console.log('[trcloud-proxy] Login OK:', data.message)
+
+  // ── 3) สลับ session เข้าห้องบริษัทปลายทาง ────────────────────────────────
+  // 🔴 ต้นเหตุที่ซิงก์ตายเงียบตั้งแต่ 8 ก.ย. 2026:
+  //    TRCloud มีหลายห้องบริษัท · login แล้ว session จะอยู่ "ห้องบ้าน" ของบัญชีนั้น
+  //    การยิง API ของห้องอื่นต้อง **สลับห้องก่อน** ไม่งั้นตอบ
+  //    {"success":0,"message":"User and Passkey are mismatched!"} ทุกครั้ง
+  //
+  //    เดิม proxy ทำแค่ login เฉย ๆ แล้วใช้ได้ เพราะห้องบ้านของบัญชีเก่าตรงกับห้องที่ใช้
+  //    พอเปลี่ยนบัญชีเมื่อ 10 ก.ย. 2026 (username/password/device_id เปลี่ยนทั้งชุด)
+  //    ห้องบ้านของบัญชีใหม่ไม่ใช่ห้องเดิม ⇒ ทุก request ถูกปฏิเสธ
+  //    แต่ pullTypeFromProxy คืน [] เฉย ๆ และตัวเรียกยังบันทึกว่า sync สำเร็จ
+  //    ⇒ ไม่มีใครรู้ว่าข้อมูลค้าง (เอกสารล่าสุดในฐานหยุดที่ 8 ก.ย. 04:28)
+  //
+  //    ขั้นตอนนี้ลอกมาจาก trcloud_auth.get_cookie_for_company() ของห้อง 25
+  //    ซึ่งพิสูจน์แล้วว่าใช้ได้จริงกับบัญชีชุดใหม่
+  //    ⚠️ passkey ที่ใช้ "สลับห้อง" คือของ **ห้องต้นทาง** (origin)
+  //       ส่วน passkey ที่ใช้ "ยิง API" คือของ **ห้องปลายทาง** — คนละตัว
+  const targetCompany = (Deno.env.get('TRCLOUD_COMPANY_ID') || '25').trim()
+  const originPasskey = (Deno.env.get('TRCLOUD_ORIGIN_PASSKEY') || '').trim()
+  if (originPasskey) {
+    try {
+      const sw = await fetch(
+        `${BASE_URL}/application/company-list/api/engine-manage/change_company_engine.php`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'User-Agent': UA,
+            'Origin': BASE_URL,
+            'Referer': `${BASE_URL}/application/company-list/`,
+            'Cookie': cookieHeader,
+          },
+          body: new URLSearchParams({
+            json: JSON.stringify({ company_id: targetCompany, passkey: originPasskey }),
+          }).toString(),
+        },
+      )
+      const swText = await sw.text()
+      let ok = false
+      try { ok = !!JSON.parse(swText)?.success } catch { ok = false }
+      console.log(`[trcloud-proxy] switch company -> ${targetCompany}: ${ok ? 'OK' : 'ไม่สำเร็จ'}`)
+    } catch (e) {
+      console.warn('[trcloud-proxy] switch company ล้มเหลว:', String(e).slice(0, 140))
+    }
+  } else {
+    console.warn('[trcloud-proxy] ไม่มี TRCLOUD_ORIGIN_PASSKEY — ข้ามการสลับห้อง (API อาจตอบ mismatch)')
+  }
+
   return cookieHeader
 }
 
