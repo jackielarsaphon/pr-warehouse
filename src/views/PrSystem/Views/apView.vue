@@ -123,9 +123,10 @@ const availableStatuses = computed(() => {
 
 const trcloudKpi = computed(() => {
   const sum = (arr, key) => arr.reduce((s, x) => s + parseFloat(x[key] || 0), 0)
-  const unpaidAp = trcloudStore.apRows.filter(x => (x.payment_status || '').includes('ยังไม่'))
+  // นับและบวกจากระดับใบ ไม่ใช่ระดับบรรทัด ไม่งั้นทั้งจำนวนใบและยอดเงินเฟ้อ
+  const unpaidAp = trcloudStore.apDocRows.filter(x => (x.payment_status || '').includes('ยังไม่'))
   return {
-    apCount: trcloudStore.apRows.length,
+    apCount: trcloudStore.apDocRows.length,
     apUnpaidCount: unpaidAp.length,
     apUnpaidAmt: sum(unpaidAp, 'grand_total')
   }
@@ -164,7 +165,10 @@ watch(
 )
 
 const filteredTrcloudRows = computed(() => {
-  let rows = trcloudStore.apRows
+  // 🔴 ต้องใช้ apDocRows (ระดับใบ) ไม่ใช่ apRows (ระดับบรรทัดสินค้า) — เหตุผลเดียวกับ poView
+  //    วัด 13 ก.ย. 2026: AP 3,031 แถว = ใบจริง 1,719 ใบ · ยอดเฟ้อ 1.47 เท่า
+  //    เคสหนัก AP26060075 โผล่ 100 แถว (TRCloud คีย์ยาง 100 เส้นเป็น 100 บรรทัด บรรทัดละ 1)
+  let rows = trcloudStore.apDocRows
 
   // Filter by Date (Client-side)
   if (trcloudDateFrom.value || trcloudDateTo.value) {

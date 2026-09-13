@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { trcloudProxyExtraHeaders, trcloudProxyUrl } from '@/utils/trcloudSession'
 import { loadDocs, upsertDocs, countDocs, getSyncState, setSyncState } from '@/lib/trcloudWarehouse'
+import { dedupeByDoc } from '@/lib/docIdentity'
 
 export const useTrcloudStore = defineStore('trcloud', () => {
   const prRows = ref([])
@@ -58,6 +59,21 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     return text.trim()
   }
 
+  // 🔴 กุญแจสำรองต้องคิดจาก "เนื้อหา" เท่านั้น ห้ามมีสุ่ม
+  //    เดิมใช้ Math.random() ต่อท้าย ⇒ แถวเดิมได้ id ใหม่ทุกครั้งที่คำนวณ computed ใหม่
+  //    ผลคือ ยุบซ้ำไม่ได้ตลอดกาล · Vue วาดตารางใหม่ทั้งตารางทุกครั้ง ·
+  //    และการติ๊กติดตามหลุดเพราะ id ที่เก็บไว้ไม่ตรงกับ id รอบถัดไป
+  //    ตัวนี้ให้ค่าเดิมเสมอสำหรับเนื้อหาเดิม (FNV-1a 32-bit)
+  const contentKey = (...parts) => {
+    const str = parts.map((x) => (x === null || x === undefined ? '' : String(x))).join('')
+    let h = 0x811c9dc5
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i)
+      h = Math.imul(h, 0x01000193) >>> 0
+    }
+    return h.toString(36)
+  }
+
   const buildApItemRow = (invoice, item) => {
     const invoiceNumber = invoice?.expense_number || invoice?.invoice_number || invoice?.doc_number || invoice?.reference || invoice?.id || ''
     const companyFormat = invoice?.company_format || ''
@@ -66,7 +82,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     const status = invoice?.payment_status || invoice?.status || invoice?.status_payment || invoice?.status_text || invoice?.invoice_status || ''
 
     return {
-      unique_id: item?.item_id || item?.ap_item_id || item?.po_item_id || `${docNumber}_${itemName}_${item?.quantity}_${item?.price}_${Math.random().toString(36).substr(2, 9)}`,
+      unique_id: item?.item_id || item?.ap_item_id || item?.po_item_id || `k_${contentKey(docNumber, itemName, item?.quantity, item?.price, item?.total, item?.product_id)}`,
       doc_number: docNumber,
       invoice_number: invoiceNumber,
       issue_date: invoice?.issue_date || invoice?.date || invoice?.issueDate || '',
@@ -231,6 +247,16 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   const poItemRows = computed(() => extractPoItemRows(poRows.value))
   const prItemRows = computed(() => extractPrItemRows(prRows.value))
 
+  // ── แถวระดับ "ใบ" สำหรับหน้าเอกสาร (คู่กับ *ItemRows ที่เป็นระดับบรรทัด) ──
+  // 🔴 po/ap เก็บ 1 แถว = 1 บรรทัดสินค้า (unique_id = item_id) หน้าเอกสารจึงต้องยุบก่อนวาด
+  //    ไม่งั้นใบเดียวโผล่หลายแถว และ KPI ที่บวก grand_total ทุกแถวจะเฟ้อ
+  //    (วัด 13 ก.ย. 2026: PO เฟ้อ 2.66 เท่า · AP เฟ้อ 1.47 เท่า)
+  // pr/pv เก็บระดับใบอยู่แล้ว — ยุบซ้ำเป็น no-op แต่ใส่ไว้เป็นตาข่ายกันพลาด
+  const prDocRows = computed(() => dedupeByDoc(prRows.value, 'pr'))
+  const poDocRows = computed(() => dedupeByDoc(poRows.value, 'po'))
+  const apDocRows = computed(() => dedupeByDoc(apRows.value, 'ap'))
+  const pvDocRows = computed(() => dedupeByDoc(pvRows.value, 'pv'))
+
   const buildExpenseItemRow = (exp, item) => {
     const expNumber = exp?.expense_number || exp?.invoice_number || exp?.doc_number || exp?.reference || exp?.id || ''
     const companyFormat = exp?.company_format || ''
@@ -242,7 +268,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
     const itemTotal = exp?.grand_total || exp?.total || item?.total || 0
 
     return {
-      unique_id: item?.x_id || item?.item_id || `${docNumber}_${itemName}_${itemTotal}_${Math.random().toString(36).substr(2, 9)}`,
+      unique_id: item?.x_id || item?.item_id || `k_${contentKey(docNumber, itemName, itemTotal, quantity, price)}`,
       doc_number: docNumber,
       invoice_number: expNumber,
       issue_date: exp?.issue_date || exp?.date || '',
@@ -1056,6 +1082,7 @@ export const useTrcloudStore = defineStore('trcloud', () => {
   return {
     prRows, poRows, apRows, pvRows, expenseRows,
     apItemRows, poItemRows, prItemRows, expenseItemRows,
+    prDocRows, poDocRows, apDocRows, pvDocRows,
     loading, lastFetched, isLoaded,
     dateFrom, dateTo,
     appoFormState, appoRowsState, appoApSearchTextState,

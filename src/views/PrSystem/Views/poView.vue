@@ -207,8 +207,11 @@ async function toggleTracked(row, checked) {
 
   if (checked) {
     // 1. ติ๊กถูก: ให้เลือกทุกรายการที่มีเลขที่เอกสารเดียวกัน (Siblings)
-    const siblings = trcloudStore.poRows.filter(r => getDocNumber(r) === docNum)
-    const siblingIds = siblings.map(r => getRowIdentity(r)).filter(Boolean)
+    // แถวบนจอเป็นระดับใบแล้ว — _lineIds คือ unique_id ของทุกบรรทัดในใบนี้
+    // (เผื่อแถวเก่าที่ไม่มี _lineIds ให้ถอยไปกวาดจาก poRows เหมือนเดิม)
+    const siblingIds = Array.isArray(row._lineIds) && row._lineIds.length
+      ? row._lineIds.filter(Boolean)
+      : trcloudStore.poRows.filter(r => getDocNumber(r) === docNum).map(r => getRowIdentity(r)).filter(Boolean)
     
     // เพิ่ม IDs ใหม่เข้าไป (ไม่ซ้ำ)
     trackedRowIds.value = [...new Set([...siblingIds, ...trackedRowIds.value])]
@@ -230,7 +233,11 @@ async function toggleTracked(row, checked) {
 }
 
 const filteredTrcloudRows = computed(() => {
-  let rows = trcloudStore.poRows
+  // 🔴 ต้องใช้ poDocRows (ระดับใบ) ไม่ใช่ poRows (ระดับบรรทัดสินค้า)
+  //    ตัวซิงก์ตั้ง unique_id ของ po เป็น item_id ⇒ 1 แถว = 1 บรรทัด
+  //    ใบที่มี 103 บรรทัดเคยโผล่ 103 แถว และ KPI ที่บวก grand_total ทุกแถว
+  //    ก็บวกยอดใบเดียวซ้ำ 103 ครั้ง (วัด 13 ก.ย. 2026: เฟ้อ 2.66 เท่า)
+  let rows = trcloudStore.poDocRows
 
   // Filter by Date
   if (trcloudDateFrom.value || trcloudDateTo.value) {
