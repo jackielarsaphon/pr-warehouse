@@ -75,16 +75,27 @@ echo "  ✓ asset อ้างถูกที่ ($REF)"
 
 # ── ด่าน: ห้ามมีความลับติดไปกับ bundle ─────────────────────────────────
 # เคยเกิดจริง: passkey ของ TRCloud ถูก Vite แทนค่าลงไฟล์ JS แล้ว deploy ขึ้นเว็บ
-# ใครเปิด pr.tdlmc.com ก็โหลดไฟล์นั้นไปอ่านค่าได้ (และค้างอยู่แบบนั้นหลายเดือน)
-# ด่านนี้จับ hex 32 ตัวที่หน้าตาเหมือน passkey — ถ้าเจอให้หยุด ไม่ต้อง deploy
-LEAK="$(grep -rhoE '[0-9a-f]{32}' dist/assets/*.js 2>/dev/null | sort -u | head -5)"
-if [ -n "$LEAK" ]; then
-  echo "  ✗ เจอค่าที่หน้าตาเหมือนความลับใน bundle — ไม่ deploy"
-  echo "$LEAK" | while read -r h; do echo "      sha256(ค่าที่เจอ) = $(printf %s "$h" | sha256sum | cut -c1-16)"; done
-  echo "     ตรวจว่า VITE_* ตัวไหนหลุดเข้าไป แล้วย้ายไปฝั่งเซิร์ฟเวอร์"
+# ใครเปิด pr.tdlmc.com ก็โหลดไฟล์นั้นไปอ่านค่าได้ (ค้างอยู่แบบนั้นตั้งแต่ 9 พ.ค. 2026)
+#
+# ตรวจด้วย "ค่าจริงจาก .env" ไม่ใช่เดาจากรูปแบบ — รอบแรกเขียนเป็น grep hex 32 ตัว
+# แล้วได้ false positive 8 ค่าจากไลบรารี (md5/ค่าคงที่) จน deploy ไม่ผ่านทั้งที่สะอาดแล้ว
+#
+# ไม่ตรวจ VITE_SUPABASE_ANON_KEY_MWM เพราะ anon key เป็นของสาธารณะโดยออกแบบ
+SECRET_VARS="VITE_TRCLOUD_PASSKEY TRCLOUD_PASSWORD TRCLOUD_COOKIE TRCLOUD_DEVICE_ID TRCLOUD_USERNAME"
+LEAKED=""
+for v in $SECRET_VARS; do
+  val="$(sed -n "s/^${v}=//p" .env 2>/dev/null | head -1 | tr -d '"'"'"'')"
+  [ -n "$val" ] && [ ${#val} -ge 8 ] || continue
+  if grep -rqF "$val" dist/assets/ 2>/dev/null; then
+    LEAKED="$LEAKED $v"
+  fi
+done
+if [ -n "$LEAKED" ]; then
+  echo "  ✗ ความลับหลุดเข้า bundle:$LEAKED — ไม่ deploy"
+  echo "     ตัวแปร VITE_* ถูกแทนค่าตอน build เสมอ ⇒ ย้ายไปให้ proxy ใส่ฝั่งเซิร์ฟเวอร์"
   exit 1
 fi
-echo "  ✓ ไม่มีความลับติดใน bundle"
+echo "  ✓ ไม่มีความลับติดใน bundle (ตรวจ $(echo $SECRET_VARS | wc -w) ตัวแปร)"
 
 echo
 echo "════ ส่งขึ้น $HOST:$DEST ════"
